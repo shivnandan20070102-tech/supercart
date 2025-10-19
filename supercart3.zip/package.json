@@ -1,0 +1,14 @@
+{
+  "name": "supercart-server",
+  "version": "1.0.0",
+  "description": "A simple backend for Supercart to handle Razorpay payments.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "razorpay": "^2.8.1"
+  }
+}
