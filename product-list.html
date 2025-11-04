@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supercart - Products</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/dark-mode.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>Supercart</span><span class="tagline">BY ANKIT SHIV</span>
+                </div>
+                <div class="header-actions">
+                    <i class="fas fa-moon dark-mode-toggle" id="darkModeToggle"></i>
+                    <i class="fab fa-whatsapp"></i>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Categories List -->
+    <section class="categories-section" style="display: none;">
+        <div class="container">
+            <h2>Categories</h2>
+            <div class="categories-grid" id="categoriesGrid">
+                <!-- Categories will be loaded dynamically -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Products List -->
+    <section class="products-section">
+        <div class="container">
+            <h2 id="pageTitle">Products</h2>
+            <div class="products-grid" id="productsList">
+                <!-- Products will be loaded dynamically -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+        <a href="index.html" class="nav-item">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </a>
+        <a href="product-list.html?section=categories" class="nav-item">
+            <i class="fas fa-tags"></i>
+            <span>Categories</span>
+        </a>
+        <a href="cart.html" class="nav-item">
+            <i class="fas fa-shopping-cart"></i>
+            <span>Cart</span>
+            <span class="cart-count" id="cartCount">0</span>
+        </a>
+        <a href="login.html" class="nav-item">
+            <i class="fas fa-user"></i>
+            <span>Account</span>
+        </a>
+    </nav>
+
+    <script src="JS/data.js"></script>
+    <script src="JS/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supercart - Product Details</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/dark-mode.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="javascript:history.back()" class="back-btn">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
+                <div class="logo">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>Supercart</span><span class="tagline">BY ANKIT SHIV</span>
+                </div>
+                <div class="header-actions">
+                    <i class="fas fa-moon dark-mode-toggle" id="darkModeToggle"></i>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section class="product-details-page">
+        <div class="container">
+            <div id="productDetails">
+                <!-- Product details will be loaded dynamically -->
+            </div>
+        </div>
+    </section>
+
+    <nav class="bottom-nav">
+        <a href="index.html" class="nav-item">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </a>
+        <a href="product-list.html" class="nav-item">
+            <i class="fas fa-list"></i>
+            <span>Products</span>
+        </a>
+        <a href="product-list.html?section=categories" class="nav-item">
+            <i class="fas fa-tags"></i>
+            <span>Categories</span>
+        </a>
+        <a href="cart.html" class="nav-item">
+            <i class="fas fa-shopping-cart"></i>
+            <span>Cart</span>
+            <span class="cart-count" id="cartCount">0</span>
+        </a>
+        <a href="login.html" class="nav-item">
+            <i class="fas fa-user"></i>
+            <span>Account</span>
+        </a>
+    </nav>
+
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        function loadProductDetails() {
+            const productDetails = document.getElementById('productDetails');
+            const selectedProduct = JSON.parse(localStorage.getItem('selectedProduct'));
+            
+            if (!selectedProduct) {
+                productDetails.innerHTML = '<p>Product not found</p>';
+                return;
+            }
+            
+            productDetails.innerHTML = `
+                <div class="product-details-layout">
+                    <div class="product-images">
+                        <div class="image-carousel">
+                            <img src="${selectedProduct.image}" alt="${selectedProduct.name}" class="active">
+                        </div>
+                        <button class="share-btn" onclick="shareProduct()">
+                            <i class="fas fa-share-alt"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="product-info">
+                        <h1>${selectedProduct.name}</h1>
+                        <div class="product-rating">
+                            <div class="stars">
+                                ${generateStars(selectedProduct.rating)}
+                            </div>
+                            <span class="rating-text">${selectedProduct.rating}</span>
+                        </div>
+                        <div class="product-price">
+                            <span class="current-price">₹${selectedProduct.price.toLocaleString()}</span>
+                            <span class="original-price">₹${selectedProduct.originalPrice.toLocaleString()}</span>
+                            <span class="discount-badge">${selectedProduct.discount}</span>
+                        </div>
+                        <div class="stock-status ${selectedProduct.inStock ? 'in-stock' : 'out-of-stock'}">
+                            ${selectedProduct.inStock ? 'In Stock' : 'Out of Stock'}
+                        </div>
+                        <p><strong>Weight:</strong> ${selectedProduct.weight}</p>
+                        <div class="product-sizes">
+                            <strong>Available Sizes:</strong>
+                            <div class="size-tags">
+                                ${selectedProduct.sizes && selectedProduct.sizes.map(size => `<button class="size-tag" onclick="selectSize(this, '${size}')">${size}</button>`).join('')}
+                            </div>
+                            <input type="hidden" id="selectedSize" value="">
+                        </div>
+                        <p>${selectedProduct.description}</p>
+                        <button class="add-btn ${!selectedProduct.inStock ? 'disabled' : ''}" 
+                                onclick="addToCart(${selectedProduct.id})" 
+                                ${!selectedProduct.inStock ? 'disabled' : ''}>
+                            <i class="fas fa-shopping-cart"></i> Add to Cart
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function selectSize(button, size) {
+            // Remove selected class from all size tags
+            document.querySelectorAll('.size-tag').forEach(tag => {
+                tag.classList.remove('selected');
+            });
+            // Add selected class to the clicked button
+            button.classList.add('selected');
+            // Set the value of the hidden input
+            document.getElementById('selectedSize').value = size;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadProductDetails();
+            updateCartCount();
+        });
+    </script>
+</body>
+</html>
