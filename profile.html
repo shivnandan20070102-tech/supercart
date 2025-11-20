@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supercart - Profile</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>Supercart</span><span class="tagline">BY ANKIT SHIV</span>
+                </div>
+                <div class="header-actions">
+                    <button class="logout-btn" onclick="logout()">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section class="profile-section">
+        <div class="container">
+            <div class="profile-grid">
+                <div class="profile-sidebar">
+                    <div class="profile-header">
+                        <div class="profile-avatar">
+                            <img src="https://via.placeholder.com/100" alt="Profile Picture" id="profileImg">
+                            <label for="profileImgInput" class="change-photo-btn">
+                                <i class="fas fa-pencil-alt"></i>
+                            </label>
+                            <input type="file" id="profileImgInput" accept="image/*" style="display: none;">
+                        </div>
+                        <div class="profile-name" id="profileName">User Name</div>
+                        <div class="profile-email" id="profileEmail">user@example.com</div>
+                    </div>
+                    <div class="profile-tabs">
+                        <button class="profile-tab active" onclick="showTab('profile')">
+                            <i class="fas fa-user-edit"></i> <span>My Profile</span>
+                        </button>
+                        <button class="profile-tab" onclick="showTab('delivery')">
+                            <i class="fas fa-truck-loading"></i> <span>Delivery Details</span>
+                        </button>
+                        <button class="profile-tab" onclick="showTab('orders')">
+                            <i class="fas fa-history"></i> <span>Order History</span>
+                        </button>
+                        <button class="profile-tab" onclick="logout()">
+                            <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="profile-main">
+                    <div class="profile-content active" id="profileContent">
+                        <h3 class="content-title">Edit Your Profile</h3>
+                        <form id="profileForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="name">Full Name</label>
+                                    <input type="text" id="name" name="name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="email">Email</label>
+                                    <input type="email" id="email" name="email" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="phone">Phone Number</label>
+                                    <input type="tel" id="phone" name="phone" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="city">City</label>
+                                    <input type="text" id="city" name="city" required>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="address">Address</label>
+                                <textarea id="address" name="address" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="pincode">Pincode</label>
+                                <input type="number" id="pincode" name="pincode" required>
+                            </div>
+
+                            <button type="submit" class="save-btn">
+                                <i class="fas fa-save"></i> Save Profile
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="profile-content" id="deliveryContent">
+                        <h3 class="content-title">Manage Delivery Details</h3>
+                        <form id="deliveryForm">
+                            <div class="form-section">
+                                <h4><i class="fas fa-map-marked-alt"></i> Delivery Address</h4>
+                                <div class="form-group">
+                                    <label for="deliveryAddress">Complete Address</label>
+                                    <textarea id="deliveryAddress" name="deliveryAddress" required></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="deliveryCity">City</label>
+                                        <input type="text" id="deliveryCity" name="deliveryCity" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="deliveryPincode">Pincode</label>
+                                        <input type="number" id="deliveryPincode" name="deliveryPincode" required>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <h4><i class="fas fa-shipping-fast"></i> Delivery Preferences</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="deliveryTime">Preferred Delivery Time</label>
+                                        <select id="deliveryTime" name="deliveryTime">
+                                            <option value="morning">Morning (9 AM - 12 PM)</option>
+                                            <option value="afternoon">Afternoon (12 PM - 5 PM)</option>
+                                            <option value="evening">Evening (5 PM - 8 PM)</option>
+                                            <option value="anytime">Anytime</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="deliveryType">Delivery Type</label>
+                                        <select id="deliveryType" name="deliveryType">
+                                            <option value="standard">Standard (2-3 days)</option>
+                                            <option value="express">Express (1 day)</option>
+                                            <option value="same-day">Same Day</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <h4><i class="fas fa-comment-alt"></i> Special Instructions</h4>
+                                <div class="form-group">
+                                    <label for="deliveryInstructions">Delivery Instructions</label>
+                                    <textarea id="deliveryInstructions" name="deliveryInstructions" placeholder="e.g. leave at the front door"></textarea>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="save-btn">
+                                <i class="fas fa-save"></i> Save Delivery Details
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="profile-content" id="ordersContent">
+                        <div class="orders-header">
+                            <h3><i class="fas fa-receipt"></i> Order History</h3>
+                            <div class="orders-stats">
+                                <div class="stat-item">
+                                    <span class="stat-number" id="totalOrdersCount">0</span>
+                                    <span class="stat-label">Total Orders</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-number" id="totalSpent">₹0</span>
+                                    <span class="stat-label">Total Spent</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="orders-filter">
+                            <select id="orderStatusFilter" onchange="filterUserOrders(this.value)">
+                                <option value="">All Orders</option>
+                                <option value="pending">Pending</option>
+                                <option value="shipped">Shipped</option>
+                                <option value="delivered">Delivered</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </div>
+                        
+                        <div id="ordersList" class="orders-list">
+                            <!-- Orders will be loaded dynamically -->
+                        </div>
+                        
+                        <div id="noOrdersMessage" class="no-orders" style="display: none;">
+                            <i class="fas fa-box-open"></i>
+                            <h4>No Orders Yet</h4>
+                            <p>You haven't placed any orders yet. Start shopping to see your order history here.</p>
+                            <a href="index.html" class="shop-btn">
+                                <i class="fas fa-shopping-cart"></i> Start Shopping
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <nav class="bottom-nav">
+        <a href="index.html" class="nav-item">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </a>
+        <a href="product-list.html?section=categories" class="nav-item">
+            <i class="fas fa-tags"></i>
+            <span>Categories</span>
+        </a>
+        <a href="cart.html" class="nav-item">
+            <i class="fas fa-shopping-cart"></i>
+            <span>Cart</span>
+            <span class="cart-count" id="cartCount">0</span>
+        </a>
+        <a href="profile.html" class="nav-item active">
+            <i class="fas fa-user"></i>
+            <span>Account</span>
+        </a>
+    </nav>
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+    <script src="JS/profile.js"></script>
+</body>
+</html>

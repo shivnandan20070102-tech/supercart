@@ -1,0 +1,79 @@
+
+body.dark-mode {
+    --text-dark: #ecf0f1;
+    --text-light: #bdc3c7;
+    --bg-light: #2c3e50;
+    --border-color: #34495e;
+    --white: #34495e;
+}
+
+body.dark-mode .header,
+body.dark-mode .search-bar,
+body.dark-mode .category-card,
+body.dark-mode .product-card,
+body.dark-mode .bottom-nav,
+body.dark-mode .cart-items,
+body.dark-mode .cart-summary,
+body.dark-mode .auth-container,
+body.dark-mode .profile-sidebar,
+body.dark-mode .profile-main,
+body.dark-mode .orders-header,
+body.dark-mode .orders-filter select,
+body.dark-mode .order-card {
+    background-color: #34495e;
+    color: #ecf0f1;
+}
+
+body.dark-mode .logo,
+body.dark-mode .logo .tagline,
+body.dark-mode .header-actions i,
+body.dark-mode .search-bar input,
+body.dark-mode .category-card span,
+body.dark-mode .product-details h3,
+body.dark-mode .current-price,
+body.dark-mode .original-price,
+body.dark-mode .nav-item,
+body.dark-mode .cart-item-details h3,
+body.dark-mode .cart-item-price,
+body.dark-mode .auth-container h2,
+body.dark-mode .form-group label,
+body.dark-mode .profile-name,
+body.dark-mode .profile-email,
+body.dark-mode .profile-tab,
+body.dark-mode .content-title,
+body.dark-mode .orders-header h3,
+body.dark-mode .stat-label,
+body.dark-mode .order-id,
+body.dark-mode .order-date,
+body.dark-mode .item-name,
+body.dark-mode .item-quantity,
+body.dark-mode .order-total,
+body.dark-mode .form-section h4 i {
+    color: #ecf0f1;
+}
+
+body.dark-mode .add-btn {
+    background-color: #34495e;
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+body.dark-mode .add-btn:hover {
+    background-color: var(--primary-color);
+    color: #34495e;
+}
+
+body.dark-mode .logout-btn {
+    background: #e74c3c;
+    color: white;
+}
+
+body.dark-mode .logout-btn:hover {
+    background: #c0392b;
+}
+
+.dark-mode-toggle {
+    cursor: pointer;
+    font-size: 24px;
+    color: var(--text-dark);
+}

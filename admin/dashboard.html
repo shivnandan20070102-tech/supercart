@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Dashboard - Supercart</title>
+    <link rel="stylesheet" href="../css/admin.css">
+    <link rel="stylesheet" href="delivery.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="delivery-layout">
+        <header class="delivery-header">
+            <h1><i class="fas fa-shipping-fast"></i> My Deliveries</h1>
+            <div class="delivery-user">
+                <span id="deliveryPartnerName"></span>
+                <button onclick="deliveryLogout()" class="logout-btn">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </header>
+
+        <main class="delivery-main">
+            <div class="filter-controls">
+                <select id="deliveryStatusFilter">
+                    <option value="">All Assigned Orders</option>
+                    <option value="shipped">Ready for Pickup</option>
+                    <option value="out-for-delivery">Out for Delivery</option>
+                    <option value="delivered">Delivered</option>
+                </select>
+            </div>
+            <div id="assignedOrdersContainer">
+                <!-- Assigned orders will be loaded here -->
+            </div>
+        </main>
+    </div>
+
+    <div id="notification-container"></div>
+
+    <script src="delivery.js"></script>
+</body>
+</html>

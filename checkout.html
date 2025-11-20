@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supercart - Checkout</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/dark-mode.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="cart.html" class="back-btn">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
+                <div class="logo">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>Supercart</span><span class="tagline">BY SHIV</span>
+                </div>
+                <div class="header-actions">
+                    <i class="fas fa-moon dark-mode-toggle" id="darkModeToggle"></i>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section class="checkout-section">
+        <div class="container">
+            <h2>Checkout</h2>
+            
+            <div class="checkout-grid">
+                <form class="checkout-form" id="checkoutForm">
+                    <h3><i class="fas fa-user"></i> Delivery Information</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="fullName">Full Name</label>
+                            <input type="text" id="fullName" name="fullName" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="phone">Phone Number</label>
+                            <input type="tel" id="phone" name="phone" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="address">Delivery Address</label>
+                        <textarea id="address" name="address" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="landmark">Landmark (Optional)</label>
+                        <input type="text" id="landmark" name="landmark" placeholder="E.g., Near City Park">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="city">City</label>
+                            <input type="text" id="city" name="city" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="pincode">Pincode</label>
+                            <input type="number" id="pincode" name="pincode" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="instructions">Delivery Instructions (Optional)</label>
+                        <textarea id="instructions" name="instructions"></textarea>
+                    </div>
+
+                    <div class="payment-options">
+                        <h3><i class="fas fa-credit-card"></i> Payment Method</h3>
+                        <div id="paymentMethodsContainer"></div>
+                        <div id="upiDetailsContainer" style="display: none; margin-top: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; text-align: center;">
+                            <h4>Scan to Pay with UPI</h4>
+                            <div id="qrcode" style="display: flex; justify-content: center; margin-bottom: 15px;"></div>
+                            <p>Or pay to UPI ID: <strong id="upiIdText"></strong></p>
+                            <p style="font-size: 12px; color: #777;">After payment, click "Place Order" to confirm.</p>
+                        </div>
+                    </div>
+                </form>
+
+                <div class="order-summary">
+                    <h3>Order Summary</h3>
+                    <div id="orderItems">
+                        <!-- Order items will be loaded dynamically -->
+                    </div>
+                    <div class="summary-row">
+                        <span>Subtotal:</span>
+                        <span id="orderSubtotal">₹0</span>
+                    </div>
+                    <div class="summary-row">
+                        <span>Delivery Charge:</span>
+                        <span id="orderDeliveryCharge">₹0</span>
+                    </div>
+                    <div class="summary-total">
+                        <span>Total Amount:</span>
+                        <span id="orderTotal">₹0</span>
+                    </div>
+                    <button class="place-order-btn" onclick="placeOrder()">
+                        <i class="fas fa-credit-card"></i> Place Order
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <nav class="bottom-nav">
+        <a href="index.html" class="nav-item">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </a>
+        <a href="product-list.html?section=categories" class="nav-item">
+            <i class="fas fa-tags"></i>
+            <span>Categories</span>
+        </a>
+        <a href="product-list.html?section=categories" class="nav-item">
+            <i class="fas fa-tags"></i>
+            <span>Categories</span>
+        </a>
+        <a href="cart.html" class="nav-item">
+            <i class="fas fa-shopping-cart"></i>
+            <span>Cart</span>
+            <span class="cart-count" id="cartCount">0</span>
+        </a>
+        <a href="login.html" class="nav-item">
+            <i class="fas fa-user"></i>
+            <span>Account</span>
+        </a>
+    </nav>
+
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        function selectPayment(element) {
+            document.querySelectorAll('.payment-option').forEach(option => {
+                 option.classList.remove('selected');
+            });
+            element.classList.add('selected');
+            const radio = element.querySelector('input[type="radio"]');
+            radio.checked = true;
+
+            const upiDetailsContainer = document.getElementById('upiDetailsContainer');
+            const selectedValue = radio.value;
+
+            if (selectedValue === 'upi') {
+                generateUpiQrCode();
+                upiDetailsContainer.style.display = 'block';
+            } else {
+                upiDetailsContainer.style.display = 'none';
+            }
+        }
+
+        function generateUpiQrCode() {
+            // Load UPI ID from its own localStorage item
+            const upiId = localStorage.getItem('upiId');
+            const total = cart.reduce((sum, item) => sum + (item.price * (item.quantity || 1)), 0);
+
+            if (upiId && total > 0) {
+                document.getElementById('upiIdText').textContent = upiId;
+                const qrContainer = document.getElementById('qrcode');
+                qrContainer.innerHTML = ''; // Clear previous QR code
+                const upiUrl = `upi://pay?pa=${upiId}&pn=Supercart&am=${total}&cu=INR`;
+                new QRCode(qrContainer, upiUrl);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCheckoutSummary();
+            loadPaymentOptions();
+            updateCartCount();
+        });
+
+        function loadPaymentOptions() {
+            const container = document.getElementById('paymentMethodsContainer');
+            const enabledMethods = JSON.parse(localStorage.getItem('enabledPaymentMethods')) || ['cod', 'online']; // Default
+
+            const allMethods = {
+                'cod': {
+                    name: 'Cash on Delivery',
+                    icon: 'fas fa-wallet'
+                },
+                'online': {
+                    name: 'Online Payment',
+                    icon: 'fas fa-globe'
+                },
+                'card': {
+                    name: 'Credit/Debit Card',
+                    icon: 'fas fa-credit-card'
+                },
+                'upi': {
+                    name: 'UPI',
+                    icon: 'fab fa-google-pay'
+                },
+                'wallet': {
+                    name: 'Mobile Wallet',
+                    icon: 'fas fa-wallet'
+                }
+            };
+
+            let optionsHTML = '';
+            let isFirst = true;
+            enabledMethods.forEach(methodId => {
+                const method = allMethods[methodId];
+                if (method) {
+                    optionsHTML += `
+                        <div class="payment-option ${isFirst ? 'selected' : ''}" onclick="selectPayment(this)">
+                            <input type="radio" id="${methodId}" name="paymentMethod" value="${methodId}" ${isFirst ? 'checked' : ''}>
+                            <div class="radio-icon"></div>
+                            <i class="${method.icon}"></i>
+                            <label for="${methodId}">${method.name}</label>
+                        </div>`;
+                    isFirst = false;
+                }
+            });
+            
+            // Pre-select the first option and trigger necessary UI changes
+            setTimeout(() => {
+                const firstOption = document.querySelector('.payment-option');
+                if (firstOption) selectPayment(firstOption);
+            }, 0);
+
+            if (optionsHTML === '') {
+                container.innerHTML = '<p>No payment methods are currently available.</p>';
+                document.querySelector('.place-order-btn').disabled = true;
+            } else {
+                container.innerHTML = optionsHTML;
+            }
+        }
+    </script>
+</body>
+</html>
