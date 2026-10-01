@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+/* SuperCart brand theme tokens — green yahin se tweak karo */
+:root {
+  --brand: #059669;
+  --brand-dark: #047857;
+  --brand-light: #d1fae5;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans antialiased overflow-x-hidden;
+  }
+}
+
+/* Custom scrollbar and animations */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Persisted profile theme overrides the light utility palette across the app. */
+html.dark body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+html.dark .bg-slate-50 { background-color: #0f172a; }
+html.dark .bg-white { background-color: #1e293b; }
+html.dark .bg-slate-100, html.dark .bg-slate-100\/80 { background-color: #273449; }
+html.dark .bg-slate-50\/50 { background-color: rgb(30 41 59 / 0.5); }
+html.dark .text-slate-900 { color: #f8fafc; }
+html.dark .text-slate-800 { color: #e2e8f0; }
+html.dark .text-slate-700 { color: #cbd5e1; }
+html.dark .text-slate-600, html.dark .text-slate-500 { color: #94a3b8; }
+html.dark .text-slate-400 { color: #64748b; }
+html.dark .border-slate-200, html.dark .border-slate-200\/80, html.dark .border-slate-100 { border-color: #334155; }
+html.dark input, html.dark select { background-color: #273449; color: #f8fafc; border-color: #475569; }
+html.dark input::placeholder { color: #94a3b8; }
+html.dark .shadow-sm, html.dark .shadow-xl { box-shadow: 0 10px 25px rgb(2 6 23 / 0.28); }
+
+/* Quick-commerce header helpers */
+.qc-no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.qc-no-scrollbar::-webkit-scrollbar { display: none; }
+
+@keyframes qc-word-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.qc-word-in { display: inline-block; animation: qc-word-in 0.35s ease both; }
+
+@keyframes qc-sheet-up {
+  from { transform: translateY(48px); opacity: 0.5; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.qc-sheet-up { animation: qc-sheet-up 0.28s ease-out both; }
+
+/* ---- 10-sec order confirm overlay (calm / premium / soft) ---- */
+@keyframes sc-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.sc-overlay-in { animation: sc-overlay-in 0.35s ease both; }
+
+@keyframes sc-card-in {
+  0% { opacity: 0; transform: translateY(22px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.005); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sc-card-in { animation: sc-card-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes sc-count-pop {
+  0% { opacity: 0; transform: scale(0.72) translateY(6px); filter: blur(3px); }
+  55% { opacity: 1; transform: scale(1.06) translateY(0); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+}
+.sc-count-pop { animation: sc-count-pop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes sc-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.08); opacity: 0.9; }
+}
+.sc-breathe { animation: sc-breathe 2.8s ease-in-out infinite; }
+
+@keyframes sc-dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+.sc-dot { animation: sc-dot-pulse 1.4s ease-in-out infinite; }
+.sc-dot-2 { animation-delay: 0.18s; }
+.sc-dot-3 { animation-delay: 0.36s; }
+
+@keyframes sc-soft-spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,14 @@
+# Logs
+logs
+*.log
+
+node_modules/
+
+# Env (secrets — kabhi GitHub par mat dalo, Render dashboard me set karo)
+.env
+.env.*
+
+# OS / Editor
+.DS_Store
+.vscode/*
+.idea/
