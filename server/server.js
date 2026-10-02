@@ -27,6 +27,19 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
+// Root Route — Render par "/" kholne par 404 na aaye isliye.
+// Ye sirf API info deta hai, koi feature/logic change nahi karta.
+// Asli website (User/Admin/Delivery/Store panel) client/ frontend se chalti hai.
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    message: 'SuperCart API is running 🚀 — frontend ke liye /api/health check karo',
+    health: '/api/health',
+    docs: ['/api/health', '/products', '/api/products', '/api/auth/login', '/api/orders/myorders'],
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
   res.status(200).json({
