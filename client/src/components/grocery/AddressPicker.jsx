@@ -100,6 +100,42 @@ const parseReverse = (data) => {
 const inputCls =
   'min-h-[48px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-[var(--brand)] focus:bg-white focus:ring-2 focus:ring-emerald-100';
 
+// Accuracy (meters) -> halo diameter (px) at current zoom. Clamped taaki
+// street aur city dono zoom levels par circle useful dikhe.
+const accuracyToPx = (accuracy, lat, zoom) => {
+  if (accuracy == null || !Number.isFinite(accuracy)) return 44;
+  const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+  if (!metersPerPixel || metersPerPixel <= 0) return 44;
+  const px = (accuracy * 2) / metersPerPixel;
+  return Math.min(160, Math.max(28, px));
+};
+
+// Google Maps/Mapbox style live-location dot: blue dot + white ring over a
+// soft accuracy halo. Single Mapbox marker hai — pointer-events none taaki
+// map taps/drag block na hon. holder = { marker, halo } (liveRef me rakha hai).
+const upsertLiveDot = (map, holder, { lat, lng, accuracy }) => {
+  if (!map || lat == null || lng == null) return;
+  if (!holder.marker) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sc-live-wrap';
+    const halo = document.createElement('div');
+    halo.className = 'sc-live-halo';
+    const dot = document.createElement('div');
+    dot.className = 'sc-live-dot';
+    wrap.appendChild(halo);
+    wrap.appendChild(dot);
+    holder.marker = new mapboxgl.Marker({ element: wrap }).setLngLat([lng, lat]).addTo(map);
+    holder.halo = halo;
+  } else {
+    holder.marker.setLngLat([lng, lat]);
+  }
+  if (holder.halo) {
+    const size = accuracyToPx(accuracy, lat, map.getZoom());
+    holder.halo.style.width = `${size}px`;
+    holder.halo.style.height = `${size}px`;
+  }
+};
+
 /**
  * AddressPicker — live map location picker (bottom sheet).
  * Fixed center pin (Swiggy/Zomato style): map neeche move hota hai,
@@ -112,6 +148,9 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
   const mapRef = useRef(null);
   const touchedRef = useRef(new Set());
   const geoSeqRef = useRef(0);
+  const autoCenterRef = useRef(false); // agla GPS fix map ko center kare? (open par auto / button par manual)
+  const lastGpsRef = useRef(null); // aakhri GPS fix — halo resize ke liye
+  const liveRef = useRef({ marker: null, halo: null }); // live-location dot holder
   const initialRef = useRef(initial);
   initialRef.current = initial;
 
@@ -131,7 +170,16 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  const gps = useCurrentLocation();
+  // gps callbacks stable hain (useCallback) — effects me deps ke roop me safe.
+  const {
+    coords: gpsCoords,
+    loading: gpsLoading,
+    error: gpsError,
+    requestLocation: requestGpsFix,
+    startWatch: startGpsWatch,
+    stopWatch: stopGpsWatch,
+    reset: resetGps,
+  } = useCurrentLocation();
 
   // Sheet khule to state reset (saved coords ho to wahin kholo)
   useEffect(() => {
@@ -192,7 +240,9 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
       zoom: INIT_ZOOM,
       minZoom: 3,
       maxZoom: MAX_ZOOM,
-      attributionControl: false,
+      // Mapbox attribution legally required hai — compact "i" mode me rakho
+      // taaki UI obstruct na ho aur Mapbox terms bhi violate na hon.
+      attributionControl: { compact: true },
     });
     mapRef.current = map;
 
@@ -205,6 +255,12 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     };
     map.on('moveend', onMoveEnd);
     map.on('click', onTap);
+    // Zoom badalne par accuracy halo ka size dobara compute karo
+    const onZoomHalo = () => {
+      const fix = lastGpsRef.current;
+      if (fix) upsertLiveDot(map, liveRef.current, fix);
+    };
+    map.on('zoom', onZoomHalo);
     map.on('load', () => {
       const c = map.getCenter();
       setSelected({ lat: c.lat, lng: c.lng });
@@ -214,17 +270,46 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     return () => {
       map.off('moveend', onMoveEnd);
       map.off('click', onTap);
+      map.off('zoom', onZoomHalo);
+      // Live-dot marker holder reset (marker map.remove ke saath hata hai)
+      liveRef.current = { marker: null, halo: null };
+      lastGpsRef.current = null;
       map.remove();
       mapRef.current = null;
     };
   }, [open, tokenMissing]);
 
-  // GPS fix aate hi map wahan fly karo (moveend selected set kar dega)
+  // AUTO LOCATION ON OPEN — browser Geolocation automatically request karo.
+  // Manual current-location button dabane ki zarurat nahi: permission allow hote
+  // hi pehla GPS fix map ko current location par center karega + live dot dikhega.
+  // Sirf location state/map update hota hai — poora page reload nahi hota.
+  // Close/unmount par watcher stop ho jata hai. (gps methods stable hain,
+  // isliye effect sirf open/tokenMissing par chalta hai — duplicate calls nahi.)
   useEffect(() => {
-    if (gps.coords && mapRef.current) {
-      mapRef.current.flyTo({ center: [gps.coords.lng, gps.coords.lat], zoom: INIT_ZOOM, essential: true });
+    if (!open || tokenMissing) return undefined;
+    autoCenterRef.current = true;
+    resetGps();
+    startGpsWatch();
+    return () => {
+      autoCenterRef.current = false;
+      stopGpsWatch();
+    };
+  }, [open, tokenMissing, resetGps, startGpsWatch, stopGpsWatch]);
+
+  // GPS fix -> live-location dot hamesha update karo; map recenter SIRF tab jab
+  // pending ho (picker open hone par auto, ya manual recenter button par). Isse
+  // watch updates user ke pan/drag se fight nahi karte. Pehla fix moveend ke
+  // through selected + reverse-geocoded address bhi auto-update kar deta hai.
+  useEffect(() => {
+    const fix = gpsCoords;
+    if (!open || !fix) return;
+    lastGpsRef.current = fix;
+    if (mapRef.current) upsertLiveDot(mapRef.current, liveRef.current, fix);
+    if (autoCenterRef.current && mapRef.current) {
+      autoCenterRef.current = false;
+      mapRef.current.flyTo({ center: [fix.lng, fix.lat], zoom: INIT_ZOOM, essential: true });
     }
-  }, [gps.coords]);
+  }, [open, gpsCoords]);
 
   // Reverse geocode (debounced) — live readable address + REAL-TIME autofill.
   // Pin move (drag/click/recenter/search) -> turant (1-2s) City/Area/Pincode/Street
@@ -425,17 +510,26 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
               </div>
               <button
                 type="button"
-                onClick={gps.requestLocation}
-                disabled={gps.loading}
+                onClick={() => {
+                  // Manual recenter fallback: agla single-shot fix map ko center karega.
+                  autoCenterRef.current = true;
+                  requestGpsFix();
+                }}
+                disabled={gpsLoading}
                 aria-label="Use my current location"
                 title="My current location"
                 className="absolute bottom-3 right-3 flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-[var(--brand-dark)] shadow-xl transition active:scale-95 disabled:opacity-70"
               >
-                {gps.loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Crosshair className="h-5 w-5" />}
+                {gpsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Crosshair className="h-5 w-5" />}
               </button>
             </div>
           )}
-          {gps.error && <p className="mb-2 text-xs font-bold text-red-600">{gps.error}</p>}
+          {gpsLoading && (
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-emerald-700">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Getting your current location…
+            </p>
+          )}
+          {gpsError && <p className="mb-2 text-xs font-bold text-red-600">{gpsError}</p>}
 
           {/* Live readable address */}
           <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3">
