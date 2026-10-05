@@ -128,7 +128,7 @@ BEGIN
                 FROM public.users AS u
                 LEFT JOIN public.stores AS s ON s.id = NEW.store_id
                 WHERE u.role IN ('delivery', 'delivery_partner')
-                  AND COALESCE(u.verified, false) = true
+                  AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
                   AND COALESCE(u.is_available, true) = true
                   AND NOT EXISTS (
                     SELECT 1 FROM public.orders AS o
@@ -163,7 +163,7 @@ BEGIN
                 SELECT u.id INTO chosen_partner_id
                 FROM public.users AS u
                 WHERE u.role IN ('delivery', 'delivery_partner')
-                  AND COALESCE(u.verified, false) = true
+                  AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
                   AND COALESCE(u.is_available, true) = true
                   AND NOT EXISTS (
                     SELECT 1 FROM public.orders AS o
@@ -196,7 +196,7 @@ BEGIN
         FROM public.users AS u
         LEFT JOIN public.stores AS s ON s.id = NEW.store_id
         WHERE u.role IN ('delivery', 'delivery_partner')
-          AND COALESCE(u.verified, false) = true
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
           AND COALESCE(u.is_available, true) = true
           AND NOT EXISTS (
             SELECT 1 FROM public.orders AS o
@@ -226,7 +226,7 @@ BEGIN
         SELECT u.id INTO chosen_partner_id
         FROM public.users AS u
         WHERE u.role IN ('delivery', 'delivery_partner')
-          AND COALESCE(u.verified, false) = true
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
           AND COALESCE(u.is_available, true) = true
           AND NOT EXISTS (
             SELECT 1 FROM public.orders AS o
@@ -273,6 +273,201 @@ DROP TRIGGER IF EXISTS trg_auto_assign_delivery_partner ON public.orders;
 CREATE TRIGGER trg_auto_assign_delivery_partner
     AFTER INSERT ON public.orders
     FOR EACH ROW EXECUTE FUNCTION public.auto_assign_delivery_partner();
+
+-- 5. AFTER UPDATE trigger: store ne PACKED mark kiya tab assign (UPDATE path).
+-- GAP FIX: upar wala trigger sirf AFTER INSERT hai. Normal flow me order
+-- 'pending_assignment' INSERT hota hai, store markOrderPacked par UPDATE se
+-- 'packed' banta hai — INSERT trigger UPDATE par kabhi nahi chalta.
+-- Backend (markOrderPacked -> tryAssignSingleOrder) chal raha ho to wahi assign
+-- karta hai; lekin backend unreachable ho (Vercel me localhost URL / Render
+-- sleep) to direct-Supabase pack UPDATE se order 'packed' (unassigned) me ATKA
+-- rehta tha — delivery popup kabhi khulta hi nahi tha, koi sound nahi bajta tha.
+-- Ye trigger us UPDATE moment par WAHI nearest-FREE logic lagata hai
+-- (Online + verified YA approved + BUSY excluded + rejected_by respected +
+-- HOME-FIRST nearest + SKIP LOCKED race-safe). Already-assigned row ko touch
+-- nahi karta, isliye backend/30s-worker ke saath race-safe hai (jo pehle lock
+-- le, wahi jeetega). Reject/Timeout ke baad order wapas 'packed' hota hai to
+-- ye trigger use turant agle FREE partner ko de deta hai (30s wait nahi).
+CREATE OR REPLACE FUNCTION public.auto_assign_delivery_partner_on_pack()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    chosen_partner_id UUID;
+    has_geo BOOLEAN := false;
+    has_home BOOLEAN := false;
+BEGIN
+    -- Sirf 'packed' banne wale transition par kaam karo.
+    IF NEW.status IS NULL OR LOWER(NEW.status) <> 'packed' THEN
+        RETURN NEW;
+    END IF;
+    -- Pehle se assigned (backend/worker ne turant assign kar diya) to no-op.
+    IF NEW.delivery_boy_id IS NOT NULL AND NEW.delivery_boy_id <> '' THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT
+        to_regclass('public.stores') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users'
+                      AND column_name = 'current_lat')
+        AND EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users'
+                      AND column_name = 'current_lng')
+        AND NEW.store_id IS NOT NULL
+        INTO has_geo;
+
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'delivery_profiles'
+          AND column_name = 'home_store_id'
+    ) INTO has_home;
+
+    IF has_home AND NEW.store_id IS NOT NULL THEN
+        BEGIN
+            IF has_geo THEN
+                SELECT u.id INTO chosen_partner_id
+                FROM public.users AS u
+                LEFT JOIN public.stores AS s ON s.id = NEW.store_id
+                WHERE u.role IN ('delivery', 'delivery_partner')
+                  AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
+                  AND COALESCE(u.is_available, true) = true
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.orders AS o
+                    WHERE o.delivery_boy_id = u.id::text
+                      AND (o.status IS NULL OR LOWER(o.status) NOT IN ('delivered', 'completed', 'cancelled', 'failed'))
+                  )
+                  AND NOT (
+                    NEW.rejected_by IS NOT NULL
+                    AND jsonb_typeof(NEW.rejected_by) = 'array'
+                    AND NEW.rejected_by @> to_jsonb(u.id::text)
+                  )
+                  AND EXISTS (
+                    SELECT 1 FROM public.delivery_profiles AS dp
+                    WHERE dp.user_id = u.id
+                      AND dp.home_store_id = NEW.store_id
+                  )
+                ORDER BY
+                  CASE
+                    WHEN s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+                     AND u.current_lat IS NOT NULL AND u.current_lng IS NOT NULL
+                    THEN (6371 * 2 * ASIN(SQRT(
+                           POWER(SIN(RADIANS(u.current_lat - s.latitude) / 2), 2)
+                           + COS(RADIANS(s.latitude)) * COS(RADIANS(u.current_lat))
+                             * POWER(SIN(RADIANS(u.current_lng - s.longitude) / 2), 2)
+                         )))
+                    ELSE NULL
+                  END ASC NULLS LAST,
+                  RANDOM()
+                LIMIT 1
+                FOR UPDATE OF u SKIP LOCKED;
+            ELSE
+                SELECT u.id INTO chosen_partner_id
+                FROM public.users AS u
+                WHERE u.role IN ('delivery', 'delivery_partner')
+                  AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
+                  AND COALESCE(u.is_available, true) = true
+                  AND NOT EXISTS (
+                    SELECT 1 FROM public.orders AS o
+                    WHERE o.delivery_boy_id = u.id::text
+                      AND (o.status IS NULL OR LOWER(o.status) NOT IN ('delivered', 'completed', 'cancelled', 'failed'))
+                  )
+                  AND NOT (
+                    NEW.rejected_by IS NOT NULL
+                    AND jsonb_typeof(NEW.rejected_by) = 'array'
+                    AND NEW.rejected_by @> to_jsonb(u.id::text)
+                  )
+                  AND EXISTS (
+                    SELECT 1 FROM public.delivery_profiles AS dp
+                    WHERE dp.user_id = u.id
+                      AND dp.home_store_id = NEW.store_id
+                  )
+                ORDER BY RANDOM()
+                LIMIT 1
+                FOR UPDATE OF u SKIP LOCKED;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            chosen_partner_id := NULL;
+        END;
+    END IF;
+
+    IF chosen_partner_id IS NULL THEN
+      IF has_geo THEN
+        SELECT u.id INTO chosen_partner_id
+        FROM public.users AS u
+        LEFT JOIN public.stores AS s ON s.id = NEW.store_id
+        WHERE u.role IN ('delivery', 'delivery_partner')
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
+          AND COALESCE(u.is_available, true) = true
+          AND NOT EXISTS (
+            SELECT 1 FROM public.orders AS o
+            WHERE o.delivery_boy_id = u.id::text
+              AND (o.status IS NULL OR LOWER(o.status) NOT IN ('delivered', 'completed', 'cancelled', 'failed'))
+          )
+          AND NOT (
+            NEW.rejected_by IS NOT NULL
+            AND jsonb_typeof(NEW.rejected_by) = 'array'
+            AND NEW.rejected_by @> to_jsonb(u.id::text)
+          )
+        ORDER BY
+          CASE
+            WHEN s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+             AND u.current_lat IS NOT NULL AND u.current_lng IS NOT NULL
+            THEN (6371 * 2 * ASIN(SQRT(
+                   POWER(SIN(RADIANS(u.current_lat - s.latitude) / 2), 2)
+                   + COS(RADIANS(s.latitude)) * COS(RADIANS(u.current_lat))
+                     *                    POWER(SIN(RADIANS(u.current_lng - s.longitude) / 2), 2)
+                 )))
+            ELSE NULL
+          END ASC NULLS LAST,
+          RANDOM()
+        LIMIT 1
+        FOR UPDATE OF u SKIP LOCKED;
+    ELSE
+        SELECT u.id INTO chosen_partner_id
+        FROM public.users AS u
+        WHERE u.role IN ('delivery', 'delivery_partner')
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
+          AND COALESCE(u.is_available, true) = true
+          AND NOT EXISTS (
+            SELECT 1 FROM public.orders AS o
+            WHERE o.delivery_boy_id = u.id::text
+              AND (o.status IS NULL OR LOWER(o.status) NOT IN ('delivered', 'completed', 'cancelled', 'failed'))
+          )
+          AND NOT (
+            NEW.rejected_by IS NOT NULL
+            AND jsonb_typeof(NEW.rejected_by) = 'array'
+            AND NEW.rejected_by @> to_jsonb(u.id::text)
+          )
+        ORDER BY RANDOM()
+        LIMIT 1
+        FOR UPDATE OF u SKIP LOCKED;
+      END IF;
+    END IF;
+
+    IF chosen_partner_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    UPDATE public.orders
+    SET delivery_boy_id = chosen_partner_id::text,
+        status = 'assigned'
+    WHERE id = NEW.id
+      AND (delivery_boy_id IS NULL OR delivery_boy_id = '');
+
+    RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION public.auto_assign_delivery_partner_on_pack() IS
+'Store PACKED mark (UPDATE) par order-wale-store ka nearest FREE delivery partner auto-assign karta hai (verified YA approved, PACKED-gate, geo-fallback random); reject/timeout ke baad wapas packed hone par agle partner ko turant deta hai.';
+
+DROP TRIGGER IF EXISTS trg_auto_assign_delivery_on_pack ON public.orders;
+CREATE TRIGGER trg_auto_assign_delivery_on_pack
+    AFTER UPDATE OF status ON public.orders
+    FOR EACH ROW EXECUTE FUNCTION public.auto_assign_delivery_partner_on_pack();
 
 -- ===================================================
 -- VERIFY (optional, RUN ke baad alag se chalao):

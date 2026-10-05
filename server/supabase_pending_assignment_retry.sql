@@ -10,7 +10,7 @@
 --   free na ho to order yahin rehta hai; Reject/Timeout ke baad bhi order
 --   wapas 'packed' (unassigned) jata hai. Is queue me partner FREE hote hi
 --   use turant assign karna hai.
---   FREE = verified + is_available(true) + koi active order nahi (BUSY excluded).
+--   FREE = (verified YA approved) + is_available(true) + koi active order nahi (BUSY excluded).
 --
 -- Ye file 2 cheezein karti hai (Node 30s worker ke SAATH kaam karti hai):
 --   1. BEFORE INSERT normalize: delivery_boy_id ke bina 'Placed'/'pending'
@@ -99,7 +99,7 @@ BEGIN
         SELECT 1 FROM public.users AS u
         WHERE u.id = p_partner_id
           AND u.role IN ('delivery', 'delivery_partner')
-          AND COALESCE(u.verified, false) = true
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
           AND COALESCE(u.is_available, true) = true
           -- BUSY RULE: active order wala partner eligible nahi
           AND NOT EXISTS (
@@ -216,7 +216,7 @@ BEGIN
         SELECT u.id
         FROM public.users AS u
         WHERE u.role IN ('delivery', 'delivery_partner')
-          AND COALESCE(u.verified, false) = true
+          AND (COALESCE(u.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = u.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved'))
           AND COALESCE(u.is_available, true) = true
           -- BUSY partners ko loop me uthao hi mat (inner function me bhi check hai)
           AND NOT EXISTS (
@@ -250,11 +250,14 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-    -- Sirf false -> true transition par kaam karo (har UPDATE par nahi)
+    -- Sirf false -> true transition par kaam karo (har UPDATE par nahi).
+    -- Eligible = verified YA approved (approval flow verified set kare bina bhi
+    -- approve kar sakta hai — sirf verified check par Online hote hi instant
+    -- assign kabhi nahi hota tha aur order packed me atka rehta tha).
     IF COALESCE(OLD.is_available, false) = false
        AND COALESCE(NEW.is_available, false) = true
        AND NEW.role IN ('delivery', 'delivery_partner')
-       AND COALESCE(NEW.verified, false) = true THEN
+       AND (COALESCE(NEW.verified, false) = true OR EXISTS (SELECT 1 FROM public.delivery_profiles AS dp WHERE dp.user_id = NEW.id AND LOWER(COALESCE(dp.approval_status, '')) = 'approved')) THEN
         PERFORM public.assign_oldest_pending_to_partner(NEW.id);
     END IF;
     RETURN NEW;

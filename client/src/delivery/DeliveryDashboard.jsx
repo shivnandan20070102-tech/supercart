@@ -558,6 +558,22 @@ const DeliveryDashboard = () => {
     }
   }, [orders, loading, popupOrderId, user]);
 
+  // Realtime-miss fallback: Supabase realtime event RLS/publication ya network
+  // ki wajah se chhoot jaye to naya assignment isi poll se ~10s me dikhega aur
+  // Accept popup + siren khulenge. Sirf refetch hai — popup/siren/countdown/
+  // assignment logic ko haath nahi lagata.
+  useEffect(() => {
+    if (!user) return undefined;
+    const pollId = window.setInterval(() => {
+      try {
+        loadOrders(user.id);
+      } catch {
+        /* ignore — agla poll retry karega */
+      }
+    }, 10000);
+    return () => window.clearInterval(pollId);
+  }, [loadOrders, user]);
+
   // Siren audio file ko mount par preload karo + user gesture par browser
   // autoplay unlock (customer sound + SIREN dono). Online toggle wala tap
   // guaranteed gesture hai (wahan bhi unlock hota hai), ye mount wala har

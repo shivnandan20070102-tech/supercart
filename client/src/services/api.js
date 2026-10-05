@@ -2,7 +2,7 @@ import { MOCK_PRODUCTS } from '../data/mockGroceryData';
 import { supabase } from '../config/supabase';
 import { findNearestStore } from './nearestStore';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com';
 
 export const fetchProducts = async (category = '', search = '') => {
   try {
