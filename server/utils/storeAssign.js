@@ -2,21 +2,21 @@
 // SuperCart — Order → Store assignment (core logic)
 // ---------------------------------------------------
 // Order create hote waqt store_id WAHI hona chahiye jo user
-// ke nearest ACTIVE store ka hai (10km radius, Prompt 2).
+// ke nearest ACTIVE store ka hai (5km radius, Prompt 2).
 // Client fresh-resolve karke bhejta hai, lekin authoritative
 // faisla YAHAN hota hai taaki stale/tampered id save na ho:
 //
 //  - delivery coords milein -> server-side nearest nikalo
 //    (Prompt 1 ka RPC, fallback: active stores + Haversine).
 //    Claimed id authoritative se alag ho to authoritative jeetega.
-//  - 10km me koi store na ho -> OUT_OF_SERVICE (order reject).
+//  - 5km me koi store na ho -> OUT_OF_SERVICE (order reject).
 //  - coords na hon + claimed id ho -> store exists & active?
 //    verify karo, invalid ho to INVALID_STORE (order reject).
 //  - multi-store migration abhi run hi nahi hui (tables/RPC
 //    missing) -> legacy mode: store_id null, order phir bhi save.
 // ===================================================
 
-export const SERVICE_RADIUS_KM = 10;
+export const SERVICE_RADIUS_KM = 5;
 
 // Haversine distance (km) — client config/store.js wala formula, backend copy
 export const haversineKm = (lat1, lon1, lat2, lon2) => {

@@ -10,7 +10,7 @@ const ProductCard = ({ product }) => {
   const { toggleWishlist, isInWishlist } = useWishlist();
   const { isOnline, serviceable } = useStore();
 
-  // Area serviceable nahi (10km me koi store nahi) to ordering band — sirf browsing
+  // Area serviceable nahi (5km me koi store nahi) to ordering band — sirf browsing
   // Stock 0 / in_stock false ho to bhi purchase band ("Out of Stock").
   const cartItem = cartItems.find((item) => item.id === product.id);
   const quantity = cartItem ? cartItem.quantity : 0;

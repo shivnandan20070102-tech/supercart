@@ -16,10 +16,10 @@ const GPS_STORAGE_KEY = 'supercart_gps_coords';
 /**
  * StoreProvider — do cheezein manage karta hai:
  * 1. Global store on/off status (store_settings, pehle se tha)
- * 2. Multi-store: user location se nearest ACTIVE store (10km radius),
+ * 2. Multi-store: user location se nearest ACTIVE store (5km radius),
  *    session-persisted taaki Home/Cart/Header sab use kar sakein.
  *
- * serviceable: true (store mila) | false (10km me koi store nahi) | null (location/radius unknown)
+ * serviceable: true (store mila) | false (5km me koi store nahi) | null (location/radius unknown)
  */
 export const StoreProvider = ({ children }) => {
   const [isOnline, setIsOnline] = useState(true);

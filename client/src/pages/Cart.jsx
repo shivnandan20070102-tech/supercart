@@ -331,7 +331,7 @@ const Cart = () => {
       setCheckoutError('Store is currently closed, please check back later.');
       return;
     }
-    // 10km me koi store nahi — ordering band
+    // 5km me koi store nahi — ordering band
     if (serviceable === false) {
       setCheckoutError("Sorry, we don't deliver to your area yet");
       return;

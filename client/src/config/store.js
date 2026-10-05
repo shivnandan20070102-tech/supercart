@@ -4,7 +4,7 @@ export const DELIVERY_ETA_MINUTES = 10;
 
 // Multi-store service radius — user ke is distance (km) ke andar koi active
 // store na ho to area unserviceable mana jata hai (sirf browsing, no ordering)
-export const SERVICE_RADIUS_KM = 10;
+export const SERVICE_RADIUS_KM = 5;
 
 // Store / dark-store coordinates (Sector 62, Noida)
 export const STORE_LOCATION = {
