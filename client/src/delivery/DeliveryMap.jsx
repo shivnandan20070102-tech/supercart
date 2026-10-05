@@ -82,16 +82,20 @@ const accuracyCircle = (lng, lat, radiusMeters, points = 64) => {
 
 // Poori screen ka live map — Dashboard ke background me fixed rehta hai.
 // Partner ki current location green pulsing dot se dikhti hai + accuracy circle.
+// Blue Dot ONLINE status se juda hai (order ka wait nahi): Online + permission
+// milte hi dot, Offline me dot hata. Order pins (deliveryPoints) Accept ke
+// baad dot ke SAATH dikhte hain.
 // fallbackCenter: partner ke Home Store ke coords {lat, lng} — GPS fix na ho to
 // map Delhi ke bajaye Home Store par khulta hai (Dashboard se aata hai).
-// locationAllowed: SIRF assigned/home-store context me true (koi ACTIVE order ho
-// tab). False = idle/unrelated — live dot/accuracy/flyTo bilkul nahi, map sirf
-// Home Store fallback par rehta hai. Auto GPS prompt bhi sirf scope me hota hai.
-// assignedStoreIds/homeStoreId: scope debug ke liye (map bounds logic future me).
-const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedStoreIds = [], homeStoreId = null } = {}) => {
+// locationAllowed: Dashboard ke isOnline ka mirror (true = Online).
+// deliveryPoints: [{id, lat, lng, label}] active orders ke customer pins.
+// assignedStoreIds/homeStoreId: scope debug ke liye.
+const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedStoreIds = [], homeStoreId = null, deliveryPoints = [] } = {}) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  // Order id -> { marker } (customer delivery pins, Blue Dot se alag).
+  const deliveryMarkersRef = useRef(new Map());
   const followRef = useRef(true);
   // Page-load auto-recenter sirf EK baar ho — StrictMode double-effect se
   // bachne ke liye ref guard (re-render par reset nahi hota).
@@ -123,7 +127,7 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
   } = useLiveLocation();
   const [showHelp, setShowHelp] = useState(false);
 
-  // Scope guard: idle/unrelated context me live pill kabhi "Live" na dikhaye.
+  // Scope guard: Offline me live pill kabhi "Live" na dikhaye.
   const gps = !locationAllowed ? 'off' : position ? 'live' : locating ? 'searching' : locError ? 'off' : 'idle';
 
   // Map init — sirf ek baar (geolocation hook se aata hai, auto-start nahi)
@@ -210,15 +214,21 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
 
     map.on('load', enhanceDetail);
 
+    /* eslint-disable react-hooks/exhaustive-deps -- unmount cleanup: ye refs isi effect me bane map/pins ko point karte hain, direct access safe hai */
     return () => {
       window.removeEventListener('resize', onResize);
       map.off('load', enhanceDetail);
       markerRef.current = null;
+      try {
+        for (const [, { marker }] of deliveryMarkersRef.current) marker.remove();
+      } catch { /* ignore */ }
+      deliveryMarkersRef.current.clear();
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
+    /* eslint-enable react-hooks/exhaustive-deps */
     // fallbackCenter mount ke baad async aata hai — uske liye alag effect hai
     // (upar), isliye init sirf ek baar chalta hai.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,8 +236,8 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
 
   // Error aaye to toast dikhao. Blocked-permission wala message lamba
   // (10s) taaki unblock steps padhe ja sakein; normal error 4s.
-  // SCOPE: idle (locationAllowed false) me location chahiye hi nahi — hook ke
-  // stale error toast yahan mat dikhao (noise + confusion).
+  // OFFLINE me location chahiye hi nahi — hook ke stale error toast yahan
+  // mat dikhao (noise + confusion).
   useEffect(() => {
     if (!locationAllowed) {
       setShowHelp(false);
@@ -250,15 +260,15 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
   }, [locError, clearError, isBlocked, permissionState, locationAllowed]);
 
   // Live position aate hi: green marker + accuracy circle + follow ho to flyTo.
-  // SCOPE GUARD: locationAllowed false (idle / unrelated store) ho to live dot
-  // bilkul mat dikhao — map Home Store fallback par hi rahega.
+  // ONLINE GUARD: Offline ho to live dot bilkul mat dikhao — map Home Store
+  // fallback par hi rahega. Online me dot order status se independent hai.
   // DEBUG: coords yahan tak pahunche ya nahi, console me [DeliveryMap] BLUE DOT
-  // lines se dikhega. Fix mila par dot na dikhe to ya scope off hai (neeche
-  // wali line) ya map init nahi hua.
+  // lines se dikhega. Fix mila par dot na dikhe to ya Offline ho ya map init
+  // nahi hua.
   useEffect(() => {
     if (!locationAllowed) {
       // eslint-disable-next-line no-console
-      console.info('[DeliveryMap] fix suppressed by home-store scope (no active assigned order). homeStoreId=', scopeInfoRef.current.home, 'assignedStores=', scopeInfoRef.current.stores);
+      console.info('[DeliveryMap] BLUE DOT hidden — partner Offline. homeStoreId=', scopeInfoRef.current.home, 'assignedStores=', scopeInfoRef.current.stores);
       return;
     }
     if (!position || !mapRef.current) return;
@@ -323,13 +333,13 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
     }
   }, [position, locationAllowed]);
 
-  // Scope off hote hi (idle/unrelated) purana live dot + accuracy circle hatao
-  // taaki doosre store ke context me pichli location chipki na rahe. Map ko
-  // Home Store fallback par wapas lao (follow on ho tabhi).
+  // Offline hote hi live dot + accuracy circle hatao (Online wapas aate hi
+  // dot phir banega — position hook me warm rehti hai). Map Home Store
+  // fallback par wapas (follow on ho tabhi).
   useEffect(() => {
     if (locationAllowed || !mapRef.current) return;
     // eslint-disable-next-line no-console
-    console.info('[DeliveryMap] live dot removed — scope off (no active assigned order).');
+    console.info('[DeliveryMap] live dot removed — partner went Offline.');
     try {
       if (markerRef.current) {
         markerRef.current.remove();
@@ -364,13 +374,62 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
     } catch { /* ignore */ }
   }, [fallbackCenter, position]);
 
+  // Delivery pins: ACTIVE orders ke customer addresses (red pins). Blue Dot
+  // (rider) se independent — Accept ke baad dot rehta hai + ye judte hain,
+  // deliver hote hi resumed list se hatne par pin bhi hat jata hai.
+  // Coords invalid hon to pin skip (dot par koi asar nahi).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const list = Array.isArray(deliveryPoints) ? deliveryPoints : [];
+    const seen = new Set();
+    let added = 0;
+    for (const p of list) {
+      const id = String(p?.id ?? '');
+      const lat = Number(p?.lat);
+      const lng = Number(p?.lng);
+      if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+      seen.add(id);
+      const existing = deliveryMarkersRef.current.get(id);
+      if (existing) {
+        try {
+          existing.marker.setLngLat([lng, lat]);
+        } catch { /* ignore */ }
+        continue;
+      }
+      try {
+        const marker = new mapboxgl.Marker({ color: '#f43f5e' }).setLngLat([lng, lat]);
+        if (p.label) {
+          marker.setPopup(new mapboxgl.Popup({ offset: 25, closeButton: false }).setText(String(p.label)));
+        }
+        marker.addTo(map);
+        deliveryMarkersRef.current.set(id, { marker });
+        added += 1;
+      } catch { /* ignore */ }
+    }
+    let removed = 0;
+    for (const [id, { marker }] of deliveryMarkersRef.current) {
+      if (seen.has(id)) continue;
+      try {
+        marker.remove();
+      } catch { /* ignore */ }
+      deliveryMarkersRef.current.delete(id);
+      removed += 1;
+    }
+    if (added > 0 || removed > 0) {
+      // eslint-disable-next-line no-console
+      console.info('[DeliveryMap] delivery pins: +', added, ' -', removed, ' total =', deliveryMarkersRef.current.size);
+    }
+  }, [deliveryPoints]);
+
   const handleLocate = () => {
     followRef.current = true;
     setShowHelp(false);
     // eslint-disable-next-line no-console
     console.info('[DeliveryMap] locate tapped, perm=', permissionState, 'allowed=', locationAllowed);
-    // SCOPE GUARD: idle/unrelated me live position par MAT kudo — sirf Home
-    // Store fallback par raho. Scope me ho tabhi purana live-center behavior.
+    // OFFLINE GUARD: Offline me live position par MAT kudo — sirf Home
+    // Store fallback par raho. Online ho tabhi live-center behavior.
     if (!locationAllowed) {
       const lngLat = toLngLat(fallbackCenter);
       if (lngLat && mapRef.current) {
@@ -395,12 +454,11 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
     requestLocation();
   };
 
-  // Page load par auto-recenter — SIRF scope me (koi ACTIVE order ho tab),
-  // bilkul aise jaise user ne khud locate button dabaya ho. Idle me browser
-  // permission prompt + spinner bekaar me nahi (dot waise bhi hidden rehta).
-  // Scope baad me mile (naya assignment aaye) to tab ek baar auto fire hota
-  // hai taaki marker bina tap ke aa jaye. Uske baad manual button same rehta
-  // hai. Permission pehle se Blocked hai to wahi existing error message aayega.
+  // Auto GPS prompt — SIRF Online ho tab (Dashboard khula + Online). Offline me
+  // browser permission prompt + spinner bekaar me nahi (dot waise bhi hidden).
+  // Login par Offline/loading ho aur baad me Online aaye to tab ek baar auto
+  // fire hota hai taaki dot bina tap ke aa jaye. Uske baad manual button same.
+  // Permission pehle se Blocked hai to wahi existing error message aayega.
   useEffect(() => {
     if (!locationAllowed || autoLocateDoneRef.current) return;
     autoLocateDoneRef.current = true;

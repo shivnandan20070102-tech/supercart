@@ -47,6 +47,9 @@ export const getAssignedStoreIds = (orders) => {
 };
 
 // Live location share/dikhao ya nahi — idle me bilkul nahi.
+// NOTE: Dashboard ka Blue Dot ab is par depend NAHI karta (Online status par
+// hai) — ye sirf historical/scope checks ke liye rakha hai taaki purane
+// callers na tootein. OrderDetail ka isOrderInScope guard pehle jaisa sakht hai.
 export const shouldShareLiveLocation = ({ homeStoreId, orders } = {}) => {
   const active = getActiveOrders(orders);
   if (active.length === 0) return false;
@@ -78,4 +81,26 @@ export const isOrderInScope = (order, { userId, homeStoreId, assignedStoreIds } 
   // assignedStoreIds na di ho to owner+active hi kaafi (caller ke paas poori list nahi).
   if (!Array.isArray(assignedStoreIds)) return true;
   return false;
+};
+
+// Active orders ke delivery points — map par customer address pins ke liye.
+// Sirf valid coords wale orders aate hain: {id, lat, lng, label}.
+// Pure hai taaki Node se unit-test ho sake.
+export const getDeliveryPoints = (orders) => {
+  const points = [];
+  for (const o of getActiveOrders(orders)) {
+    const addr = o?.shipping_address || {};
+    const lat = Number(addr.latitude ?? addr.lat);
+    const lng = Number(addr.longitude ?? addr.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+    const parts = [addr.label, addr.address || addr.formattedAddress, addr.city, addr.pincode || addr.postalCode].filter(Boolean);
+    points.push({
+      id: String(o.id),
+      lat,
+      lng,
+      label: parts.length > 0 ? `Order #${o.id} — ${parts.join(', ')}` : `Order #${o.id}`,
+    });
+  }
+  return points;
 };

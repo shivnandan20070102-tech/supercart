@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Bell, BellOff, BriefcaseBusiness, Check, CircleHelp, ClipboardList, DoorOpen, Loader2, Mailbox, MapPin, Package, PawPrint, Phone, PhoneOff, ShieldCheck, Siren, Store, Truck, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
-import { getAssignedStoreIds, shouldShareLiveLocation } from './storeScope';
+import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
 import { getDeliverySirenState, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
 
@@ -636,28 +636,29 @@ const DeliveryDashboard = () => {
   useEffect(() => () => stopDeliverySiren(), []);
 
   // Rider live location → users.current_lat/current_lng (throttled persist).
-  // SCOPE GUARD: sirf assigned/home-store context me broadcast karo — koi
-  // ACTIVE assigned order na ho (idle/history) to bilkul write mat karo taaki
-  // doosre store ya unrelated location par location na dikhe.
+  // ONLINE GUARD: Dashboard khula + partner Online ho tabhi broadcast karo —
+  // order accept ka wait nahi (Blue Dot hamesha Online state se juda hai).
+  // Offline ho to bilkul write mat karo (battery + privacy).
   // Nearest-store assignment backend me isi se distance nikalta hai.
   // Siren/timer/assignment logic ko haath nahi lagata — sirf GPS write.
   // Permission denied ya error ho to silent (rider phir bhi eligible rehta
   // hai, backend random fallback se assign karta hai).
-  // locationAllowed orders/homeStoreId se banta hai (neeche) — scope badalte
-  // hi watch restart/stop hota hai, throttling/min-move same rehta hai.
-  const locationAllowed = shouldShareLiveLocation({ homeStoreId, orders });
+  // locationAllowed isOnline se banta hai — toggle karte hi watch
+  // restart/stop hota hai, throttling/min-move same rehta hai.
+  // isOnline null = availability abhi load ho rahi → tab tak false (no prompt).
+  const locationAllowed = isOnline === true;
   const assignedStoreIds = getAssignedStoreIds(orders);
   // DEBUG: scope transitions console me — dot na dikhe to sabse pehle ye
-  // dekho. allowed=false + activeCount=0 matlab rider idle hai (koi ACTIVE
-  // assigned order nahi) → dot BY DESIGN hidden, permission se matlab nahi.
-  // Dot chahiye to koi order assigned/accepted stage me hona chahiye.
+  // dekho. allowed Online status se banta hai (order status se matlab nahi):
+  // allowed=false + isOnline=false matlab rider Offline hai → dot hidden.
+  // allowed=true par dot na dikhe to GPS fix/permission issue hai (aage logs).
   useEffect(() => {
     try {
       const activeCount = (orders || []).filter((o) =>
         ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(String(o.status || '').toLowerCase()),
       ).length;
       // eslint-disable-next-line no-console
-      console.info('[DeliveryDashboard] location scope: allowed =', locationAllowed, '| activeOrders =', activeCount, '| homeStoreId =', homeStoreId, '| assignedStores =', assignedStoreIds);
+      console.info('[DeliveryDashboard] location scope: allowed =', locationAllowed, '| isOnline =', isOnline, '| activeOrders =', activeCount, '| homeStoreId =', homeStoreId, '| assignedStores =', assignedStoreIds);
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationAllowed, homeStoreId]);
@@ -910,6 +911,10 @@ const DeliveryDashboard = () => {
 
   const activeOrders = orders.filter((order) => String(order.status || '').toLowerCase() !== 'delivered');
   const historyOrders = orders.filter((order) => String(order.status || '').toLowerCase() === 'delivered');
+  // Map pins: ACTIVE orders ke delivery addresses (coords hon tabhi). Blue Dot
+  // (rider) hamesha rehta hai; ye pins Accept ke baad uske SAATH judte hain.
+  // useMemo taaki har render par nayi array na bane (map effect bekaar me na chale).
+  const deliveryPoints = React.useMemo(() => getDeliveryPoints(orders), [orders]);
   // "assigned" (naye, unseen) orders ka detail feed me MAT dikhao —
   // wo sirf Accept popup me simple dikhte hain; detail Accept ke baad.
   const visibleOrders = activeOrders.filter((order) => String(order.status || '').toLowerCase() !== 'assigned');
@@ -1015,11 +1020,11 @@ const DeliveryDashboard = () => {
 
   return (
     <div className="relative min-h-screen text-white">
-      {/* Live map: SIRF assigned/home-store context me live dot — idle me sirf
-          Home Store fallback center (koi live broadcast/dot nahi). assignedStoreIds
-          debug/scope ke liye pass hota hai, map UI same rehta hai. */}
+      {/* Live map: Blue Dot = Online status se (order ka wait nahi). Offline me
+          dot/pins nahi — map Home Store fallback par rehta hai. Accept ke baad
+          dot rehta hai + deliveryPoints (customer pins) uske saath judte hain. */}
       <React.Suspense fallback={<div className="fixed inset-0 z-0 bg-slate-950" />}>
-        <DeliveryMap fallbackCenter={homeStoreCenter} locationAllowed={locationAllowed} assignedStoreIds={assignedStoreIds} homeStoreId={homeStoreId} />
+        <DeliveryMap fallbackCenter={homeStoreCenter} locationAllowed={locationAllowed} assignedStoreIds={assignedStoreIds} homeStoreId={homeStoreId} deliveryPoints={deliveryPoints} />
       </React.Suspense>
       {/* Fixed top bar */}
       <div className="fixed inset-x-0 top-0 z-30 border-b border-slate-800 bg-slate-950/95 shadow-sm backdrop-blur-sm">
