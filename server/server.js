@@ -20,8 +20,41 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Enable CORS for React Frontend
-app.use(cors());
+// CORS — Live Vercel frontend + local dev explicitly allowed.
+// Pehle bare `cors()` (wildcard *) tha, isliye browser origin block nahi
+// hota tha; phir bhi explicit allowlist rakhte hain taaki future me koi
+// galat domain API hit na kare aur preflight hamesha clean 200 de.
+// Extra domain chahiye to Render env me: CORS_ALLOWED_ORIGINS=https://a.com,https://b.com
+const CORS_DEFAULT_ORIGINS = [
+  'https://supercart-iota.vercel.app', // Live Vercel frontend
+  'http://localhost:5173', // Vite dev
+  'http://localhost:3000', // CRA/alt dev
+  'http://localhost:5000', // local backend self-check
+];
+const CORS_ENV_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+// Vercel preview deployments (supercart-*.vercel.app) bhi allow — exact
+// production domain upar list me hai, ye sirf preview/test builds ke liye.
+const CORS_PREVIEW_PATTERN = /\.vercel\.app$/;
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Origin header nahi (curl, mobile apps, server-to-server) — allow.
+    if (!origin) return callback(null, true);
+    const list = CORS_ENV_ORIGINS.length > 0 ? CORS_ENV_ORIGINS : CORS_DEFAULT_ORIGINS;
+    if (list.includes(origin) || CORS_PREVIEW_PATTERN.test(origin)) return callback(null, true);
+    // Unknown browser origin — crash nahi, bas CORS headers mat do (browser khud block karega).
+    console.warn(`⚠️ CORS blocked origin: ${origin}`);
+    return callback(null, false);
+  },
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  // Kuch purane webviews 204 preflight par atakte hain — 200 safest hai.
+  optionsSuccessStatus: 200,
+  maxAge: 86400, // preflight 24h cache — har POST se pehle OPTIONS nahi ghumega
+};
+app.use(cors(corsOptions));
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));

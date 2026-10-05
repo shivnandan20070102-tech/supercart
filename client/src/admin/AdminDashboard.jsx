@@ -26,7 +26,7 @@ const sections = [
 const emptyCoupon = { code: '', discount_type: 'percentage', discount_value: '', min_order_amount: 0, expiry_date: '', is_active: true, usage_limit: '', used_count: 0 };
 const emptyProduct = { name: '', description: '', price: '', original_price: '', unit: '', category: '', image: '', stock: 50, in_stock: true, badge: '', is_featured: false };
 const inputClass = 'w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500';
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
 const AdminDashboard = () => {
   const navigate = useNavigate();

@@ -3,7 +3,7 @@ import { supabase } from '../config/supabase';
 import { findNearestStore } from './nearestStore';
 import { decrementStockDirect } from './stock';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
 export const fetchProducts = async (category = '', search = '') => {
   try {
