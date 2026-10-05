@@ -5,10 +5,21 @@ import { Info, Loader2, LocateFixed, MapPinOff, RotateCcw } from 'lucide-react';
 import useLiveLocation from './useLiveLocation';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
-// GPS off/deny ho to default view (New Delhi)
+// GPS off/deny + koi Home Store na ho tab ka LAST-RESORT default view.
+// Pehle Home Store (fallbackCenter prop) try hota hai — Delhi sirf tab jab
+// partner ka home store pata hi na ho.
 const DEFAULT_CENTER = [77.209, 28.6139];
 const DEFAULT_ZOOM = 15;
 const FOCUS_ZOOM = 16;
+
+// Home Store coords valid hain to [lng, lat] do, warna null (Delhi default).
+const toLngLat = (center) => {
+  const lat = Number(center?.lat);
+  const lng = Number(center?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return [lng, lat];
+};
 
 const makeGreenDot = () => {
   const el = document.createElement('div');
@@ -43,7 +54,13 @@ const accuracyCircle = (lng, lat, radiusMeters, points = 64) => {
 
 // Poori screen ka live map — Dashboard ke background me fixed rehta hai.
 // Partner ki current location green pulsing dot se dikhti hai + accuracy circle.
-const DeliveryMap = () => {
+// fallbackCenter: partner ke Home Store ke coords {lat, lng} — GPS fix na ho to
+// map Delhi ke bajaye Home Store par khulta hai (Dashboard se aata hai).
+// locationAllowed: SIRF assigned/home-store context me true (koi ACTIVE order ho
+// tab). False = idle/unrelated — live dot/accuracy/flyTo bilkul nahi, map sirf
+// Home Store fallback par rehta hai. Tracking hook untouched rehta hai.
+// assignedStoreIds/homeStoreId: scope debug ke liye (map bounds logic future me).
+const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
@@ -70,7 +87,8 @@ const DeliveryMap = () => {
   } = useLiveLocation();
   const [showHelp, setShowHelp] = useState(false);
 
-  const gps = position ? 'live' : locating ? 'searching' : locError ? 'off' : 'idle';
+  // Scope guard: idle/unrelated context me live pill kabhi "Live" na dikhaye.
+  const gps = !locationAllowed ? 'off' : position ? 'live' : locating ? 'searching' : locError ? 'off' : 'idle';
 
   // Map init — sirf ek baar (geolocation hook se aata hai, auto-start nahi)
   useEffect(() => {
@@ -80,7 +98,9 @@ const DeliveryMap = () => {
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: DEFAULT_CENTER,
+      // Mount ke waqt Home Store pata ho to wahin kholo, warna Delhi default
+      // (GPS fix / fallback effect baad me sahi jagah flyTo kar dega).
+      center: toLngLat(fallbackCenter) || DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM, // 15
       minZoom: 3,
       maxZoom: 19,
@@ -163,6 +183,9 @@ const DeliveryMap = () => {
         mapRef.current = null;
       }
     };
+    // fallbackCenter mount ke baad async aata hai — uske liye alag effect hai
+    // (upar), isliye init sirf ek baar chalta hai.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Error aaye to toast dikhao. Blocked-permission wala message lamba
@@ -185,9 +208,11 @@ const DeliveryMap = () => {
   }, [locError, clearError, isBlocked, permissionState]);
 
   // Live position aate hi: green marker + accuracy circle + follow ho to flyTo.
-  // Yehi #4 hai — fix milte hi map TURANT us par center hota hai.
+  // SCOPE GUARD: locationAllowed false (idle / unrelated store) ho to live dot
+  // bilkul mat dikhao — map Home Store fallback par hi rahega.
+  // Yehi #4 hai — fix milte hi map TURANT us par center hota hai (sirf scope me).
   useEffect(() => {
-    if (!position || !mapRef.current) return;
+    if (!locationAllowed || !position || !mapRef.current) return;
     const map = mapRef.current;
     const { lng, lat, accuracy } = position;
     if (typeof lng !== 'number' || typeof lat !== 'number') return;
@@ -234,13 +259,63 @@ const DeliveryMap = () => {
     if (followRef.current) {
       map.flyTo({ center: [lng, lat], zoom: FOCUS_ZOOM, essential: true });
     }
-  }, [position]);
+  }, [position, locationAllowed]);
+
+  // Scope off hote hi (idle/unrelated) purana live dot + accuracy circle hatao
+  // taaki doosre store ke context me pichli location chipki na rahe. Map ko
+  // Home Store fallback par wapas lao (follow on ho tabhi).
+  useEffect(() => {
+    if (locationAllowed || !mapRef.current) return;
+    try {
+      if (markerRef.current) {
+        markerRef.current.remove();
+        markerRef.current = null;
+      }
+      const map = mapRef.current;
+      if (map.getLayer('live-accuracy-fill')) map.removeLayer('live-accuracy-fill');
+      if (map.getLayer('live-accuracy-line')) map.removeLayer('live-accuracy-line');
+      if (map.getSource('live-accuracy')) map.removeSource('live-accuracy');
+    } catch { /* ignore */ }
+    const lngLat = toLngLat(fallbackCenter);
+    if (lngLat && followRef.current) {
+      try {
+        mapRef.current.flyTo({ center: lngLat, zoom: DEFAULT_ZOOM, essential: true });
+      } catch { /* ignore */ }
+    }
+  }, [locationAllowed, fallbackCenter]);
+
+  // Home Store fallback: GPS fix abhi tak na ho aur Home Store coords mil jayein
+  // to map Delhi ke bajaye Home Store par flyTo kare. GPS fix aate hi upar wala
+  // effect live position par le jata hai (GPS hamesha jeetega). User ne khud map
+  // ghumaya ho (follow off) to zabardasti wapas mat kheecho.
+  useEffect(() => {
+    if (position || !mapRef.current) return;
+    if (!followRef.current) return;
+    const lngLat = toLngLat(fallbackCenter);
+    if (!lngLat) return;
+    try {
+      // eslint-disable-next-line no-console
+      console.info('[DeliveryMap] centering on home store:', lngLat[1], lngLat[0]);
+      mapRef.current.flyTo({ center: lngLat, zoom: DEFAULT_ZOOM, essential: true });
+    } catch { /* ignore */ }
+  }, [fallbackCenter, position]);
 
   const handleLocate = () => {
     followRef.current = true;
     setShowHelp(false);
     // eslint-disable-next-line no-console
-    console.info('[DeliveryMap] locate tapped, perm=', permissionState);
+    console.info('[DeliveryMap] locate tapped, perm=', permissionState, 'allowed=', locationAllowed);
+    // SCOPE GUARD: idle/unrelated me live position par MAT kudo — sirf Home
+    // Store fallback par raho. Scope me ho tabhi purana live-center behavior.
+    if (!locationAllowed) {
+      const lngLat = toLngLat(fallbackCenter);
+      if (lngLat && mapRef.current) {
+        try {
+          mapRef.current.flyTo({ center: lngLat, zoom: DEFAULT_ZOOM, essential: true });
+        } catch { /* ignore */ }
+      }
+      return;
+    }
     // Position pehle se hai to TURANT re-center karo (GPS wait mat karo),
     // phir fresh fix mango taaki blue/green dot live jagah par aaye.
     if (position && mapRef.current) {

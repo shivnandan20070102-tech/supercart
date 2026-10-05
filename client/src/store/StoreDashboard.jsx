@@ -681,10 +681,15 @@ const StoreDashboard = () => {
               const packable = isPackable(order);
               const packing = packingId === order.id;
               const waitingForRider = statusLower(order.status) === 'packed' && !order.delivery_boy_id;
-              // Rider-to-store distance (optional display — data ho tabhi)
+              // Rider-to-store distance — SIRF assigned/home-store context me.
+              // Orders pehle hi store_id IN (my stores) se filtered hain + partner
+              // sirf tab jab order.delivery_boy_id set ho. Isliye doosre store ka
+              // rider / unassigned rider ki location yahan kabhi nahi dikhegi.
+              // Stale realtime row (doosre store ki) aa jaye to guard se null.
               const storeRow = order.store_id != null ? stores.find((s) => Number(s.id) === Number(order.store_id)) : stores[0];
               const riderKm = (() => {
-                if (!partner) return null;
+                if (!partner || !order.delivery_boy_id) return null;
+                if (order.store_id == null || !storeRow || Number(storeRow.id) !== Number(order.store_id)) return null;
                 const rLat = numOrNull(partner.current_lat);
                 const rLng = numOrNull(partner.current_lng);
                 const sLat = numOrNull(storeRow?.latitude);

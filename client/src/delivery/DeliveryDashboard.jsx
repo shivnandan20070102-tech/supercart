@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Bell, BellOff, BriefcaseBusiness, Check, CircleHelp, ClipboardList, DoorOpen, Loader2, Mailbox, MapPin, Package, PawPrint, Phone, PhoneOff, ShieldCheck, Siren, Store, Truck, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
+import { getAssignedStoreIds, shouldShareLiveLocation } from './storeScope';
 import { getDeliverySirenState, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
 
@@ -298,6 +299,10 @@ const DeliveryDashboard = () => {
   // Partner ka Home Store (delivery_profiles.home_store_id) — "Go to Store"
   // button isi store ka Google Maps route kholta hai, kisi aur ka nahi.
   const [homeStoreId, setHomeStoreId] = useState(null);
+  // Home Store ke coords {lat, lng} — GPS off ho to background map Delhi ke
+  // bajaye Home Store par khule (DeliveryMap fallbackCenter). Na mile to null
+  // = purana Delhi default.
+  const [homeStoreCenter, setHomeStoreCenter] = useState(null);
   // Home Store popup card: pehle naam + details dikho, phir andar wale
   // "Go to Store" se Maps khulo (seedha redirect nahi).
   const [storePopup, setStorePopup] = useState(null); // {id,name,address,lat,lng} | null
@@ -595,16 +600,56 @@ const DeliveryDashboard = () => {
     };
   }, []);
 
+  // Home Store center: homeStoreId pata chalte hi stores table se coords lao
+  // taaki map GPS-off me Delhi ke bajaye Home Store par khule. Sirf READ hai —
+  // popup/siren/assignment logic ko haath nahi lagata.
+  useEffect(() => {
+    let cancelled = false;
+    const hid = homeStoreId != null ? Number(homeStoreId) : null;
+    if (hid == null || Number.isNaN(hid)) {
+      setHomeStoreCenter(null);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('stores')
+          .select('latitude, longitude')
+          .eq('id', hid)
+          .maybeSingle();
+        if (cancelled) return;
+        const lat = Number(data?.latitude);
+        const lng = Number(data?.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          setHomeStoreCenter({ lat, lng });
+        } else {
+          setHomeStoreCenter(null);
+        }
+      } catch {
+        if (!cancelled) setHomeStoreCenter(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [homeStoreId]);
+
   // Dashboard unmount (logout/navigate) par siren kabhi peeche na baje.
   useEffect(() => () => stopDeliverySiren(), []);
 
   // Rider live location → users.current_lat/current_lng (throttled persist).
+  // SCOPE GUARD: sirf assigned/home-store context me broadcast karo — koi
+  // ACTIVE assigned order na ho (idle/history) to bilkul write mat karo taaki
+  // doosre store ya unrelated location par location na dikhe.
   // Nearest-store assignment backend me isi se distance nikalta hai.
   // Siren/timer/assignment logic ko haath nahi lagata — sirf GPS write.
   // Permission denied ya error ho to silent (rider phir bhi eligible rehta
   // hai, backend random fallback se assign karta hai).
+  // locationAllowed orders/homeStoreId se banta hai (neeche) — scope badalte
+  // hi watch restart/stop hota hai, throttling/min-move same rehta hai.
+  const locationAllowed = shouldShareLiveLocation({ homeStoreId, orders });
+  const assignedStoreIds = getAssignedStoreIds(orders);
   useEffect(() => {
     if (!user || !('geolocation' in navigator)) return undefined;
+    if (!locationAllowed) return undefined;
     const uid = user.id;
     let watchId = null;
     let lastSentAt = 0;
@@ -649,7 +694,7 @@ const DeliveryDashboard = () => {
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       } catch { /* ignore */ }
     };
-  }, [user]);
+  }, [user, locationAllowed]);
 
   // Safety: popup wala order bahar se hat/badal jaye to popup band karo + siren stop.
   useEffect(() => {
@@ -956,9 +1001,11 @@ const DeliveryDashboard = () => {
 
   return (
     <div className="relative min-h-screen text-white">
-      {/* Live map background me fixed rahega */}
+      {/* Live map: SIRF assigned/home-store context me live dot — idle me sirf
+          Home Store fallback center (koi live broadcast/dot nahi). assignedStoreIds
+          debug/scope ke liye pass hota hai, map UI same rehta hai. */}
       <React.Suspense fallback={<div className="fixed inset-0 z-0 bg-slate-950" />}>
-        <DeliveryMap />
+        <DeliveryMap fallbackCenter={homeStoreCenter} locationAllowed={locationAllowed} assignedStoreIds={assignedStoreIds} homeStoreId={homeStoreId} />
       </React.Suspense>
       {/* Fixed top bar */}
       <div className="fixed inset-x-0 top-0 z-30 border-b border-slate-800 bg-slate-950/95 shadow-sm backdrop-blur-sm">

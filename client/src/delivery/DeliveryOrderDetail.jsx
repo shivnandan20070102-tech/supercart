@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../config/supabase';
+import { isOrderInScope } from './storeScope';
 
 // Checkout wale delivery-instruction values ka label + icon map
 const INSTRUCTION_META = {
@@ -61,6 +62,8 @@ const DeliveryOrderDetail = () => {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState('');
+  // Rider ka Home Store — Navigate/map sirf assigned/home scope me.
+  const [homeStoreId, setHomeStoreId] = useState(null);
 
   const loadOrder = useCallback(async (uid) => {
     const { data, error: orderError } = await supabase
@@ -104,6 +107,15 @@ const DeliveryOrderDetail = () => {
         return;
       }
       setUser(current);
+      // Home store scope ke liye (Navigate guard) — fail ho to null = owner check hi scope.
+      try {
+        const { data } = await supabase
+          .from('delivery_profiles')
+          .select('home_store_id')
+          .eq('user_id', current.id)
+          .maybeSingle();
+        if (mounted && data?.home_store_id != null) setHomeStoreId(Number(data.home_store_id));
+      } catch { /* ignore — owner check still applies */ }
       await loadOrder(current.id);
     };
     init();
@@ -126,6 +138,16 @@ const DeliveryOrderDetail = () => {
 
   const updateStatus = async (status) => {
     if (!order || updating) return;
+    // Scope guard: doosre rider / unassigned order ka status mat badlo.
+    const scopeOk = isOrderInScope(order, {
+      userId: user?.id,
+      homeStoreId,
+      assignedStoreIds: order?.store_id != null ? [Number(order.store_id)] : undefined,
+    });
+    if (!scopeOk) {
+      setError('This order is outside your assigned/home store scope.');
+      return;
+    }
     setUpdating(true);
     setError('');
     const { error: updateError } = await supabase
@@ -163,6 +185,14 @@ const DeliveryOrderDetail = () => {
   const isCOD = /cash/i.test(paymentMethod);
   const statusKey = String(order?.status || '').toLowerCase();
   const stepIndex = FLOW.findIndex((s) => s.key === statusKey);
+  // SCOPE GUARD: Navigate/map sirf apne assigned + home/assigned-store context me.
+  // Kisi doosre rider ka order ya unassigned order khul jaye to Navigate mat do.
+  // Fallback assignment (store home se alag, par mujhe assigned) allowed hai.
+  const orderInScope = isOrderInScope(order, {
+    userId: user?.id,
+    homeStoreId,
+    assignedStoreIds: order?.store_id != null ? [Number(order.store_id)] : undefined,
+  });
 
   return (
     <main className="min-h-screen bg-slate-950 pb-10 text-white">
@@ -233,16 +263,31 @@ const DeliveryOrderDetail = () => {
               <Phone className="h-5 w-5" />
               Call{phone ? ` • ${phone}` : ''}
             </a>
-            <a
-              href={mapsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex min-h-[52px] items-center justify-center gap-2 rounded-2xl bg-slate-800 text-sm font-black text-white transition hover:bg-slate-700 active:scale-[0.98]"
-            >
-              <Navigation className="h-5 w-5 text-emerald-400" />
-              Navigate
-            </a>
+            {orderInScope ? (
+              <a
+                href={mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex min-h-[52px] items-center justify-center gap-2 rounded-2xl bg-slate-800 text-sm font-black text-white transition hover:bg-slate-700 active:scale-[0.98]"
+              >
+                <Navigation className="h-5 w-5 text-emerald-400" />
+                Navigate
+              </a>
+            ) : (
+              <span
+                title="Not in your assigned store scope"
+                className="flex min-h-[52px] cursor-not-allowed items-center justify-center gap-2 rounded-2xl bg-slate-800/50 text-sm font-black text-slate-600"
+              >
+                <Navigation className="h-5 w-5" />
+                Navigate
+              </span>
+            )}
           </div>
+          {!orderInScope && !loading && order && (
+            <p className="mt-2 text-xs font-bold text-amber-300">
+              This order is outside your assigned/home store scope — map access is restricted.
+            </p>
+          )}
         </section>
 
         {/* 3. PRODUCTS SECTION */}
