@@ -69,9 +69,13 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
             reviewsCount: Number(item.reviews_count || item.reviewsCount || 40),
             badge: item.badge || '',
             // Real-time stock: available qty clearly dikhao (null = legacy/unknown).
-            stock: item.stock ?? item.stock_quantity ?? null,
-            in_stock: item.in_stock ?? null,
-            inStock: (item.in_stock ?? item.inStock ?? true) !== false && !(item.stock != null && Number(item.stock) <= 0),
+            // Canonical: stock_quantity / is_in_stock / low_stock_threshold.
+            stock: item.stock_quantity ?? item.stock ?? null,
+            stock_quantity: item.stock_quantity ?? item.stock ?? null,
+            in_stock: item.is_in_stock ?? item.in_stock ?? null,
+            is_in_stock: item.is_in_stock ?? item.in_stock ?? null,
+            low_stock_threshold: item.low_stock_threshold ?? 5,
+            inStock: (item.is_in_stock ?? item.in_stock ?? item.inStock ?? true) !== false && !((item.stock_quantity ?? item.stock) != null && Number(item.stock_quantity ?? item.stock) <= 0),
             description: item.description,
             // Multi-store: product kis store ka hai (NULL = purana/global product, sab stores par)
             store_id: item.store_id ?? item.storeId ?? null,
@@ -94,7 +98,7 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
   }, [selectedCategory, debouncedSearch]);
 
   // Real-time stock: kisi aur user ke order se stock ghate to grid turant
-  // update ho (page reload nahi). Sirf stock/in_stock fields patch hote hain —
+  // update ho (page reload nahi). Sirf stock fields patch hote hain —
   // filter/order/cart logic untouched.
   useEffect(() => {
     const channel = supabase
@@ -103,17 +107,22 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
         const next = payload.new;
         if (!next || next.id == null) return;
         // eslint-disable-next-line no-console
-        console.info('[stock] live update product', next.id, '->', next.stock);
+        console.info('[stock] live update product', next.id, '->', next.stock_quantity ?? next.stock);
+        const sq = next.stock_quantity ?? next.stock;
+        const flag = next.is_in_stock ?? next.in_stock;
         setProducts((prev) =>
           prev.map((p) =>
             String(p.id) === String(next.id)
               ? {
                   ...p,
-                  stock: next.stock ?? p.stock,
-                  in_stock: next.in_stock ?? p.in_stock,
+                  stock: sq ?? p.stock,
+                  stock_quantity: sq ?? p.stock_quantity,
+                  in_stock: flag ?? p.in_stock,
+                  is_in_stock: flag ?? p.is_in_stock,
+                  low_stock_threshold: next.low_stock_threshold ?? p.low_stock_threshold,
                   inStock:
-                    (next.in_stock ?? p.in_stock ?? true) !== false &&
-                    !(next.stock != null && Number(next.stock) <= 0),
+                    (flag ?? p.in_stock ?? true) !== false &&
+                    !(sq != null && Number(sq) <= 0),
                 }
               : p,
           ),

@@ -53,14 +53,15 @@ export const normalizeStockItems = (items) => {
 };
 
 // Pure check — DB read ke baad: kaunsi line me kitna kam hai.
+// Canonical: stock_quantity / is_in_stock (purane stock/in_stock fallback).
 export const findInsufficient = (stockById, normalized) => {
   const short = [];
   for (const e of normalized) {
     if (e.dbId == null) continue; // non-DB product — no stock concept
     const row = stockById.get(e.dbId);
     if (!row) continue; // product DB me nahi (legacy) — block mat karo
-    const available = Number(row.stock ?? 0);
-    const flaggedOut = row.in_stock === false;
+    const available = Number(row.stock_quantity ?? row.stock ?? 0);
+    const flaggedOut = (row.is_in_stock ?? row.in_stock) === false;
     if (flaggedOut || available <= 0 || available < e.qty) {
       short.push({ dbId: e.dbId, name: e.name, requested: e.qty, available: Math.max(0, available) });
     }
@@ -99,20 +100,20 @@ const decrementOne = async (supabase, dbId, qty) => {
   try {
     const { data: cur, error: readErr } = await supabase
       .from('products')
-      .select('id,stock')
+      .select('id,stock_quantity')
       .eq('id', dbId)
       .maybeSingle();
     if (readErr) return { ok: false, missingRpc: true, error: readErr };
     if (!cur) return { ok: true, missingRpc: true, skipped: true }; // legacy row
-    const available = Number(cur.stock ?? 0);
+    const available = Number(cur.stock_quantity ?? 0);
     if (available < qty) return { ok: false, missingRpc: true, remaining: available };
     const next = available - qty;
     const { data: updated, error: updErr } = await supabase
       .from('products')
-      .update({ stock: next })
+      .update({ stock_quantity: next })
       .eq('id', dbId)
-      .gte('stock', qty)
-      .select('id,stock');
+      .gte('stock_quantity', qty)
+      .select('id,stock_quantity');
     if (updErr) return { ok: false, missingRpc: true, error: updErr };
     if (!updated || updated.length === 0) {
       // Race haar gaye — kisi aur ne beech me stock le liya.
@@ -133,9 +134,9 @@ const incrementOne = async (supabase, dbId, qty) => {
     if (!error) return;
   } catch { /* fallback neeche */ }
   try {
-    const { data: cur } = await supabase.from('products').select('id,stock').eq('id', dbId).maybeSingle();
+    const { data: cur } = await supabase.from('products').select('id,stock_quantity').eq('id', dbId).maybeSingle();
     if (!cur) return;
-    await supabase.from('products').update({ stock: Number(cur.stock ?? 0) + qty }).eq('id', dbId);
+    await supabase.from('products').update({ stock_quantity: Number(cur.stock_quantity ?? 0) + qty }).eq('id', dbId);
   } catch { /* best-effort */ }
 };
 
@@ -150,7 +151,7 @@ export const reserveStockForOrder = async (supabase, items) => {
   try {
     const { data: rows } = await supabase
       .from('products')
-      .select('id,name,stock,in_stock')
+      .select('id,name,stock_quantity,low_stock_threshold,is_in_stock')
       .in('id', normalized.map((e) => e.dbId));
     for (const r of rows || []) {
       stockById.set(Number(r.id), r);
@@ -170,9 +171,9 @@ export const reserveStockForOrder = async (supabase, items) => {
     await releaseStockReservation(supabase, reserved);
     let available = null;
     try {
-      const { data: cur } = await supabase.from('products').select('stock').eq('id', e.dbId).maybeSingle();
-      available = cur ? Math.max(0, Number(cur.stock ?? 0)) : 0;
-    } catch { available = stockById.get(e.dbId) ? Math.max(0, Number(stockById.get(e.dbId).stock ?? 0)) : 0; }
+      const { data: cur } = await supabase.from('products').select('stock_quantity').eq('id', e.dbId).maybeSingle();
+      available = cur ? Math.max(0, Number(cur.stock_quantity ?? 0)) : 0;
+    } catch { available = stockById.get(e.dbId) ? Math.max(0, Number(stockById.get(e.dbId).stock_quantity ?? 0)) : 0; }
     return {
       ok: false,
       reserved: [],

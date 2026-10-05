@@ -3,7 +3,7 @@ import { Star, Plus, Minus, Check, Clock, Heart } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useStore } from '../../context/StoreContext';
-import { LOW_STOCK_AT, isOutOfStock, stockLabel, stockOf } from '../../services/stock';
+import { isLowStock, isOutOfStock, stockLabel, stockOf } from '../../services/stock';
 
 const ProductCard = ({ product }) => {
   const { cartItems, addToCart, updateQuantity } = useCart();
@@ -68,13 +68,20 @@ const ProductCard = ({ product }) => {
           <Heart className={`h-4 w-4 ${wished ? 'fill-current' : ''}`} />
         </button>
 
-        {/* Image */}
+        {/* Image (Out of Stock me grayed + overlay — product hide nahi hota) */}
         <img
           src={product.image}
           alt={product.name}
-          className="w-full h-full object-contain object-center transform group-hover:scale-108 transition-transform duration-500"
+          className={`w-full h-full object-contain object-center transition-all duration-500 ${outOfStock ? 'grayscale opacity-60' : 'transform group-hover:scale-108'}`}
           loading="lazy"
         />
+        {outOfStock && (
+          <div className="absolute inset-0 z-[5] flex items-center justify-center bg-slate-950/45">
+            <span className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black uppercase tracking-widest text-white shadow-xl">
+              Out of Stock
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Product Details Section */}
@@ -100,14 +107,15 @@ const ProductCard = ({ product }) => {
               ({product.reviewsCount || 40})
             </span>
           </div>
-          {/* Live available stock — har product par clearly visible */}
+          {/* Live available stock — har product par clearly visible.
+              Threshold (low_stock_threshold, default 5) se kam par Low Stock alert. */}
           {available != null || outOfStock ? (
             <p
               className={`mt-1.5 text-[11px] font-bold ${
-                outOfStock ? 'text-rose-600' : available <= LOW_STOCK_AT ? 'text-amber-600' : 'text-emerald-600'
+                outOfStock ? 'text-rose-600' : isLowStock(product) ? 'text-amber-600' : 'text-emerald-600'
               }`}
             >
-              {stockLabel(product)}
+              {isLowStock(product) ? `⚠ ${stockLabel(product)}` : stockLabel(product)}
             </p>
           ) : null}
         </div>

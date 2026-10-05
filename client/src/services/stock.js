@@ -14,24 +14,41 @@ const numOrNull = (v) => {
 };
 
 // DB row ya normalized product se available qty (null = unknown/legacy).
+// Canonical: stock_quantity (purana `stock` fallback — sync trigger mirror).
 export const stockOf = (p) => {
   if (!p || typeof p !== 'object') return null;
-  const s = numOrNull(p.stock ?? p.stock_quantity ?? p.qty);
+  const s = numOrNull(p.stock_quantity ?? p.stock ?? p.stock_qty ?? p.qty);
   return s == null ? null : Math.max(0, Math.floor(s));
 };
 
 export const isOutOfStock = (p) => {
   if (!p || typeof p !== 'object') return false;
-  if (p.in_stock === false || p.inStock === false || p.inStock === 'false') return true;
+  const flag = p.is_in_stock ?? p.in_stock ?? p.inStock;
+  if (flag === false || flag === 'false') return true;
   const s = stockOf(p);
   return s != null && s <= 0;
+};
+
+// Per-product low-stock threshold (DB low_stock_threshold, default 5).
+export const lowStockThresholdOf = (p) => {
+  const t = numOrNull(p?.low_stock_threshold ?? p?.lowStockThreshold);
+  if (t == null) return LOW_STOCK_AT;
+  return Math.max(0, Math.floor(t));
+};
+
+// Out nahi, par threshold par/usse kam — "Low Stock" alert.
+export const isLowStock = (p) => {
+  if (isOutOfStock(p)) return false;
+  const s = stockOf(p);
+  if (s == null) return false;
+  return s <= lowStockThresholdOf(p);
 };
 
 export const stockLabel = (p) => {
   if (isOutOfStock(p)) return 'Out of Stock';
   const s = stockOf(p);
   if (s == null) return '';
-  if (s <= LOW_STOCK_AT) return `Only ${s} left`;
+  if (s <= lowStockThresholdOf(p)) return `Low Stock: only ${s} left`;
   return `In Stock (${s})`;
 };
 
@@ -54,8 +71,8 @@ export const validateCartStock = (cartItems, stockRows) => {
   for (const item of cartItems || []) {
     const row = byId.get(String(item?.id));
     if (!row) continue; // legacy/seed product ya row missing — block mat karo
-    const available = Math.max(0, Math.floor(Number(row.stock ?? 0) || 0));
-    const flaggedOut = row.in_stock === false;
+    const available = Math.max(0, Math.floor(Number(row.stock_quantity ?? row.stock ?? 0) || 0));
+    const flaggedOut = (row.is_in_stock ?? row.in_stock) === false;
     const need = Math.max(1, Math.floor(Number(item?.quantity) || 1));
     if (flaggedOut || available <= 0 || available < need) {
       problems.push({
@@ -73,7 +90,7 @@ export const validateCartStock = (cartItems, stockRows) => {
 export const fetchStockMap = async (supabase, ids) => {
   const list = [...new Set((ids || []).filter((v) => v != null && String(v).trim() !== '' && !Number.isNaN(Number(v)) && Number(v) > 0).map((v) => Number(v)))];
   if (list.length === 0) return [];
-  const { data, error } = await supabase.from('products').select('id,name,stock,in_stock').in('id', list);
+  const { data, error } = await supabase.from('products').select('id,name,stock_quantity,low_stock_threshold,is_in_stock').in('id', list);
   if (error) throw error;
   return data || [];
 };
@@ -112,15 +129,15 @@ export const decrementStockDirect = async (supabase, items) => {
     if (done) continue;
     // Fallback: gte-guarded update (migration pending / RPC blocked).
     try {
-      const { data: cur } = await supabase.from('products').select('id,stock').eq('id', dbId).maybeSingle();
+      const { data: cur } = await supabase.from('products').select('id,stock_quantity').eq('id', dbId).maybeSingle();
       if (!cur) continue; // legacy row
-      const available = Math.max(0, Math.floor(Number(cur.stock ?? 0) || 0));
+      const available = Math.max(0, Math.floor(Number(cur.stock_quantity ?? 0) || 0));
       if (available < qty) return { ok: false, shortId: dbId, available };
       const { data: updated } = await supabase
         .from('products')
-        .update({ stock: available - qty })
+        .update({ stock_quantity: available - qty })
         .eq('id', dbId)
-        .gte('stock', qty)
+        .gte('stock_quantity', qty)
         .select('id');
       if (!updated || updated.length === 0) return { ok: false, shortId: dbId, available: 0 };
       reserved.push({ dbId, qty });

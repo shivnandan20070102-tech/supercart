@@ -22,7 +22,7 @@ export const CartProvider = ({ children }) => {
   }, [cartItems]);
 
   const stockCapOf = (product) => {
-    const s = Number(product?.stock ?? product?.stock_quantity);
+    const s = Number(product?.stock_quantity ?? product?.stock ?? product?.stock_qty);
     if (!Number.isFinite(s)) return null;
     return Math.max(0, Math.floor(s));
   };

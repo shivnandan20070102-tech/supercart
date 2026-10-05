@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BarChart3, Box, ChevronDown, Check, Crown, ImagePlus, LogOut, Menu, Pencil, Plus, Save, ScrollText, Search, ShieldCheck, Store, Ticket, Trash2, Truck, UserRound, Users, X } from 'lucide-react';
+import { BarChart3, Box, ChevronDown, Check, Crown, ImagePlus, LogOut, Menu, Minus, Pencil, Plus, Save, ScrollText, Search, ShieldCheck, Store, Ticket, Trash2, TriangleAlert, Truck, UserRound, Users, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { useStore } from '../context/StoreContext';
@@ -15,6 +15,7 @@ import MasterOverview from './MasterOverview';
 const sections = [
   { id: 'overview', label: 'Master Overview', icon: Crown },
   { id: 'products', label: 'Products', icon: Box },
+  { id: 'inventory', label: 'Inventory Alerts', icon: TriangleAlert },
   { id: 'orders', label: 'Orders', icon: BarChart3 },
   { id: 'stores', label: 'Stores', icon: Store },
   { id: 'users', label: 'Users', icon: Users },
@@ -24,7 +25,25 @@ const sections = [
   { id: 'activityLog', label: 'Activity Log', icon: ScrollText },
 ];
 const emptyCoupon = { code: '', discount_type: 'percentage', discount_value: '', min_order_amount: 0, expiry_date: '', is_active: true, usage_limit: '', used_count: 0 };
-const emptyProduct = { name: '', description: '', price: '', original_price: '', unit: '', category: '', image: '', stock: 50, in_stock: true, badge: '', is_featured: false };
+const emptyProduct = { name: '', description: '', price: '', original_price: '', unit: '', category: '', image: '', stock_quantity: 50, low_stock_threshold: 5, badge: '', is_featured: false };
+
+// ---- Inventory Alerts helpers (canonical: stock_quantity / is_in_stock /
+// low_stock_threshold; purane stock/in_stock fallback — sync trigger mirror) ----
+const alertQtyOf = (p) => {
+  const n = Number(p?.stock_quantity ?? p?.stock);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+};
+const alertThresholdOf = (p) => {
+  const t = Number(p?.low_stock_threshold);
+  return Number.isFinite(t) && t >= 0 ? Math.floor(t) : 5;
+};
+// 'out' (0) | 'low' (threshold se kam, par 0 nahi) | null (sab thik — list se bahar)
+const alertStateOf = (p) => {
+  const qty = alertQtyOf(p);
+  if (qty <= 0) return 'out';
+  if (qty <= alertThresholdOf(p)) return 'low';
+  return null;
+};
 const inputClass = 'w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
@@ -48,6 +67,9 @@ const AdminDashboard = () => {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
   const [productModal, setProductModal] = useState(false);
+  // Inventory Alerts quick-edit state.
+  const [stockDrafts, setStockDrafts] = useState({}); // productId -> typed input string
+  const [updatingStockId, setUpdatingStockId] = useState(null);
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [userForm, setUserForm] = useState({ name: '', phone: '', role: 'customer' });
@@ -165,7 +187,20 @@ const AdminDashboard = () => {
         image = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
       }
       if (!image) throw new Error('Product image required.');
-      const payload = { ...productForm, image, price: Number(productForm.price), original_price: Number(productForm.original_price || productForm.price), stock: Number(productForm.stock || 0) };
+      // Canonical stock columns (sync trigger purane stock/in_stock ko mirror
+      // karta hai). GENERATED is_in_stock + legacy mirrors kabhi bhejo mat —
+      // DB khud banata hai, bhejne par error aata hai.
+      const payload = {
+        ...productForm,
+        image,
+        price: Number(productForm.price),
+        original_price: Number(productForm.original_price || productForm.price),
+        stock_quantity: Math.max(0, Number(productForm.stock_quantity ?? productForm.stock ?? 0) || 0),
+        low_stock_threshold: Math.max(0, Number(productForm.low_stock_threshold ?? 5) || 0),
+      };
+      delete payload.stock;
+      delete payload.in_stock;
+      delete payload.is_in_stock;
       const result = editingProduct ? await supabase.from('products').update(payload).eq('id', editingProduct) : await supabase.from('products').insert(payload);
       if (result.error) throw result.error;
       setProductModal(false); setEditingProduct(null); setProductForm(emptyProduct); setImageFile(null); setImagePreview(''); notify('success', editingProduct ? 'Product updated.' : 'Product added.'); await loadProducts();
@@ -287,6 +322,46 @@ const AdminDashboard = () => {
   const filteredDeliveryProfiles = q ? profileCandidates.filter((p) => [p.name, p.email, p.phone, p.user_id].filter(Boolean).join(' ').toLowerCase().includes(q)) : profileCandidates;
   const deliveryProfileByUser = new Map(deliveryProfiles.map((profile) => [profile.user_id, profile]));
   const filteredCoupons = q ? coupons.filter((c) => [c.code, c.discount_type, String(c.discount_value), String(c.min_order_amount), c.expiry_date, String(c.id)].filter(Boolean).join(' ').toLowerCase().includes(q)) : coupons;
+  // Inventory Alerts: saare stores ke Out + Low stock ek list me (Out sabse
+  // upar). products state admin-data-realtime channel se live reload hota hai,
+  // isliye ye list bhi Realtime hai — alag subscription nahi chahiye.
+  const alertProducts = (() => {
+    const base = q ? products.filter((item) => [item.name, item.category, item.unit, String(item.id)].filter(Boolean).join(' ').toLowerCase().includes(q)) : products;
+    return base
+      .filter((item) => alertStateOf(item) !== null)
+      .sort((a, b) => {
+        const ra = alertStateOf(a) === 'out' ? 0 : 1;
+        const rb = alertStateOf(b) === 'out' ? 0 : 1;
+        return ra - rb || String(a.name || '').localeCompare(String(b.name || ''));
+      });
+  })();
+  const outCount = alertProducts.filter((p) => alertStateOf(p) === 'out').length;
+  const lowCount = alertProducts.length - outCount;
+  // Quick-edit: seedha yahin se stock save (sync trigger mirrors sambhalta hai).
+  const saveAlertStock = async (product, nextQty) => {
+    const qty = Math.floor(Number(nextQty));
+    if (!product || !Number.isFinite(qty) || qty < 0) {
+      notify('error', 'Enter a valid quantity (0 or more).');
+      return;
+    }
+    if (updatingStockId) return;
+    setUpdatingStockId(product.id);
+    try {
+      const { error } = await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
+      if (error) throw error;
+      setStockDrafts((prev) => {
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+      notify('success', `${product.name}: stock updated to ${qty}.`);
+      await loadProducts();
+    } catch (error) {
+      notify('error', error.message || 'Could not update stock.');
+    } finally {
+      setUpdatingStockId(null);
+    }
+  };
   const saveUser = async (id) => { const { error } = await supabase.from('users').update(userForm).eq('id', id); if (error) notify('error', error.message); else { setEditingUser(null); notify('success', 'User updated.'); loadUsers(); } };
   const deleteUser = async (user) => {
     if (user.email === email) {
@@ -374,7 +449,71 @@ const AdminDashboard = () => {
     <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-slate-800 bg-slate-900 p-4 transition-transform duration-200 md:static md:z-auto md:w-64 md:translate-x-0 ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}><div className="flex items-center gap-3 border-b border-slate-800 px-2 pb-5"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-slate-950"><ShieldCheck className="h-5 w-5" /></div><div><p className="font-black">SuperCart</p><p className="text-[10px] uppercase tracking-widest text-emerald-400">Admin Panel</p></div></div><nav className="mt-6 space-y-2">{sections.map(({ id, label, icon: Icon }) => { const count = id === 'overview' ? orders.length : id === 'orders' ? orders.length : id === 'users' ? users.length : id === 'delivery' ? deliveryBoys.length : id === 'coupons' ? coupons.length : null; return <button key={id} onClick={() => { setActive(id); setSearch(''); setMobileSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-bold ${active === id ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="flex items-center gap-3"><Icon className="h-4 w-4" />{label}</span>{count !== null && <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[11px]">{count}</span>}</button>; })}</nav><button onClick={logout} className="mt-auto flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-bold text-rose-300"><LogOut className="h-4 w-4" />Log out</button></aside>
     <main className="min-w-0 flex-1 bg-slate-950 p-4 pt-20 sm:p-8 sm:pt-8"><div className="mx-auto max-w-7xl"><div className="mb-8 flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">Control room</p><h1 className="mt-2 text-3xl font-black text-white">{current.label}</h1></div><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 sm:max-w-xs"><Search className="h-4 w-4 shrink-0 text-slate-500" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={active === 'overview' ? 'Search all data (order, customer, store...)' : active === 'products' ? 'Search products...' : active === 'orders' ? 'Search orders...' : active === 'stores' ? 'Search stores...' : active === 'users' ? 'Search users...' : active === 'delivery' ? 'Search delivery boys...' : active === 'coupons' ? 'Search coupons...' : 'Search partners...'} className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X className="h-4 w-4 text-slate-500 hover:text-white" /></button>}</label><button type="button" onClick={toggleStore} disabled={updatingStore} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black transition disabled:cursor-wait disabled:opacity-60 ${isOnline ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'}`}><Store className="h-4 w-4" />{updatingStore ? 'Updating...' : isOnline ? 'Online' : 'Offline'}</button><p className="text-xs text-slate-500">{email}</p></div></div>{notice.text && <div className={`mb-5 rounded-xl p-3 text-sm font-bold ${notice.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>{notice.text}</div>}
       {active === 'overview' && <MasterOverview searchQuery={search} />}
-      {active === 'products' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><div className="mb-5 flex justify-between gap-3"><div><h2 className="font-black">Products</h2><p className="text-xs text-slate-500">{q ? `${filteredProducts.length} of ${products.length} products` : `${products.length} products`}</p></div><button onClick={() => { setProductForm(emptyProduct); setEditingProduct(null); setImagePreview(''); setProductModal(true); }} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950"><Plus className="h-4 w-4" />Add Product</button></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">Product</th><th className="p-3">Category</th><th className="p-3">Price</th><th className="p-3">Stock</th><th className="p-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-800">{filteredProducts.map((item) => <tr key={item.id}><td className="p-3"><div className="flex items-center gap-3"><img src={item.image || '/favicon.svg'} alt={item.name} onError={(event) => { event.currentTarget.src = '/favicon.svg'; }} className="h-12 w-12 rounded-xl bg-slate-800 object-contain" /><div><p className="font-bold text-white">{item.name}</p><p className="text-xs text-slate-500">{item.unit}</p></div></div></td><td className="p-3 text-slate-400">{item.category}</td><td className="p-3">₹{item.price}</td><td className="p-3">{item.stock}</td><td className="p-3"><button onClick={() => editProduct(item)} className="mr-2 text-blue-300"><Pencil className="h-4 w-4" /></button><button onClick={() => deleteProduct(item)} className="text-rose-300"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table></div></section>}
+      {active === 'products' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><div className="mb-5 flex justify-between gap-3"><div><h2 className="font-black">Products</h2><p className="text-xs text-slate-500">{q ? `${filteredProducts.length} of ${products.length} products` : `${products.length} products`}</p></div><button onClick={() => { setProductForm(emptyProduct); setEditingProduct(null); setImagePreview(''); setProductModal(true); }} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950"><Plus className="h-4 w-4" />Add Product</button></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">Product</th><th className="p-3">Category</th><th className="p-3">Price</th><th className="p-3">Stock</th><th className="p-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-800">{filteredProducts.map((item) => <tr key={item.id}><td className="p-3"><div className="flex items-center gap-3"><img src={item.image || '/favicon.svg'} alt={item.name} onError={(event) => { event.currentTarget.src = '/favicon.svg'; }} className="h-12 w-12 rounded-xl bg-slate-800 object-contain" /><div><p className="font-bold text-white">{item.name}</p><p className="text-xs text-slate-500">{item.unit}</p></div></div></td><td className="p-3 text-slate-400">{item.category}</td><td className="p-3">₹{item.price}</td><td className="p-3">{item.stock_quantity ?? item.stock}</td><td className="p-3"><button onClick={() => editProduct(item)} className="mr-2 text-blue-300"><Pencil className="h-4 w-4" /></button><button onClick={() => deleteProduct(item)} className="text-rose-300"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table></div></section>}
+      {active === 'inventory' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <TriangleAlert className="h-5 w-5 text-amber-300" />
+          <h2 className="text-lg font-black">Inventory Alerts</h2>
+          <span className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-black uppercase text-white">{outCount} Out</span>
+          <span className="rounded-full bg-amber-400 px-2.5 py-1 text-[10px] font-black uppercase text-slate-950">{lowCount} Low</span>
+          <span className="ml-auto rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-400">Live · auto-updates</span>
+        </div>
+        <p className="mb-4 text-xs text-slate-400">Saare stores ke khatam / khatam-hone-wale products — store naam ke saath. Stock yahin se turant update karo.</p>
+        {alertProducts.length === 0 ? (
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-8 text-center">
+            <p className="text-sm font-black text-emerald-300">All stocked up — koi Low ya Out of Stock product nahi 🎉</p>
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {alertProducts.map((p) => {
+              const qty = alertQtyOf(p);
+              const th = alertThresholdOf(p);
+              const state = alertStateOf(p);
+              const busy = updatingStockId === p.id;
+              const draft = stockDrafts[p.id];
+              const storeName = p.store_id == null ? 'All stores' : (homeStoreNameById.get(Number(p.store_id)) || `Store #${p.store_id}`);
+              return (
+                <li key={p.id} className={`overflow-hidden rounded-2xl border bg-slate-950/60 ${state === 'out' ? 'border-rose-500/60' : 'border-amber-400/50'}`}>
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    {p.image ? (
+                      <img src={p.image} alt="" loading="lazy" className="h-11 w-11 shrink-0 rounded-xl bg-slate-800 object-contain" onError={(event) => { try { event.currentTarget.style.display = 'none'; } catch { /* ignore */ } }} />
+                    ) : (
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-xs font-black text-slate-500">—</span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black text-white">{p.name}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                        <span className="rounded-full bg-slate-800 px-2 py-0.5 font-bold text-emerald-300">{storeName}</span>
+                        <span>{p.unit || ''}</span>
+                      </p>
+                      <p className={`mt-1 text-xs font-black ${state === 'out' ? 'text-rose-400' : 'text-amber-300'}`}>
+                        {state === 'out' ? 'Out of Stock — 0 available' : `Low Stock — only ${qty} left (alert at ${th})`}
+                      </p>
+                    </div>
+                    {state === 'out' ? (
+                      <span className="shrink-0 rounded-full bg-rose-600 px-3 py-1 text-[10px] font-black uppercase text-white">Out of Stock</span>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-amber-400 px-3 py-1 text-[10px] font-black uppercase text-slate-950">Low Stock</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3">
+                    <button type="button" aria-label={`Decrease stock of ${p.name}`} disabled={busy || qty <= 0} onClick={() => saveAlertStock(p, qty - 1)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <input type="number" min="0" inputMode="numeric" aria-label={`Exact stock quantity for ${p.name}`} disabled={busy} value={draft !== undefined ? draft : String(qty)} onChange={(e) => setStockDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') saveAlertStock(p, stockDrafts[p.id] !== undefined ? stockDrafts[p.id] : qty); }} className="h-10 w-20 shrink-0 rounded-xl border border-slate-700 bg-slate-950 px-2 text-center text-sm font-black text-white outline-none focus:border-emerald-500 disabled:opacity-50" />
+                    <button type="button" aria-label={`Increase stock of ${p.name}`} disabled={busy} onClick={() => saveAlertStock(p, qty + 1)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
+                      <Plus className="h-4 w-4" />
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => saveAlertStock(p, stockDrafts[p.id] !== undefined ? stockDrafts[p.id] : qty)} className="h-10 flex-1 rounded-xl bg-emerald-500 text-xs font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60">
+                      {busy ? 'Saving…' : 'Update'}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>}
       {active === 'stores' && <StoresSection searchQuery={search} />}
       {active === 'activityLog' && <ActivityLogSection />}
       {active === 'orders' && <section className="space-y-3">{q && <p className="text-xs text-slate-400">{filteredOrders.length} of {orders.length} orders match</p>}{filteredOrders.length === 0 && <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">No orders found.</div>}{filteredOrders.map((order) => { const items = order.order_items || order.orderItems || []; const savedStatus = order.status || ''; const knownStatus = ['pending', 'pending_assignment', 'packed', 'assigned', 'accepted', 'picked_up', 'Placed', 'confirmed', 'out_for_delivery', 'delivered']; return <article key={order.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)} className="flex items-center gap-2 text-left font-bold"><ChevronDown className="h-4 w-4" /><span>Order #{order.id}<small className="mt-1 block text-xs font-normal text-slate-400">{formatDate(order.created_at || order.createdAt)} · {items.length} items{Array.isArray(order.rejected_by) && order.rejected_by.length > 0 ? ` · Rejected by ${order.rejected_by.length} partner(s)` : ''}</small></span></button><div className="flex flex-wrap gap-2"><b>₹{order.total_price ?? order.totalPrice ?? 0}</b>{assignSourceBadge(order)}<select value={savedStatus} onChange={(event) => updateStatus(order.id, event.target.value)} className="rounded-lg bg-slate-800 p-2 text-xs"><option value="">Keep current status</option>{savedStatus && !knownStatus.includes(savedStatus) && <option value={savedStatus}>{savedStatus}</option>}<option value="pending">pending</option><option value="pending_assignment">pending_assignment</option><option value="packed">packed</option><option value="assigned">assigned</option><option value="confirmed">confirmed</option><option value="out_for_delivery">out_for_delivery</option><option value="accepted">accepted</option><option value="picked_up">picked_up</option><option value="delivered">delivered</option></select><select value={order.delivery_boy_id ?? ''} disabled={assigningId === order.id} title="Manual override — change partner in an emergency despite auto-assign" onChange={(event) => assignBoy(order.id, event.target.value)} className="rounded-lg bg-slate-800 p-2 text-xs disabled:cursor-wait disabled:opacity-60"><option value="">{assigningId === order.id ? 'Updating…' : 'No delivery boy assigned'}</option>{dropdownBoys(order).map((boy) => <option key={boy.id} value={boy.id}>{partnerLabel(boy)}</option>)}</select></div></div>{expandedOrder === order.id && <div className="mt-4 space-y-2 border-t border-slate-800 pt-4">{items.map((item, index) => <div key={index} className="flex items-center justify-between gap-3 rounded-lg bg-slate-800 p-3 text-xs"><div className="flex min-w-0 items-center gap-3"><img src={item.image || '/favicon.svg'} alt={item.name || ''} onError={(event) => { event.currentTarget.src = '/favicon.svg'; }} className="h-12 w-12 shrink-0 rounded-lg bg-slate-700 object-contain" /><span className="min-w-0"><b className="block truncate">{item.name || 'Product'}</b><span className="text-slate-400">Qty {item.quantity} · ₹{item.price}</span></span></div><b>₹{Number(item.price || 0) * Number(item.quantity || 0)}</b></div>)}</div>}</article>; })}</section>}
@@ -383,7 +522,7 @@ const AdminDashboard = () => {
       {active === 'deliveryProfiles' && <section className="space-y-4"><div className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 className="font-black">Partner Profiles ({q ? `${filteredDeliveryProfiles.length} of ${deliveryProfiles.length}` : deliveryProfiles.length})</h2><p className="mt-1 text-xs text-slate-500">Live profile and document uploads from delivery partners.</p></div>{filteredDeliveryProfiles.length === 0 ? <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">No partner profiles yet.</div> : filteredDeliveryProfiles.map((partner) => <article key={partner.user_id} className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex min-w-0 items-start gap-4"><div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-800 text-emerald-400">{partner.profile_photo_url ? <SignedDocImage stored={partner.profile_photo_url} alt={partner.name} className="h-full w-full object-cover" placeholderClassName="flex h-full w-full items-center justify-center text-xs" /> : <UserRound className="h-7 w-7" />}</div><div><h3 className="font-black text-white">{partner.name}</h3><p className="mt-1 text-xs text-slate-400">{partner.email} · {partner.phone}</p><p className="mt-1.5 rounded-lg bg-slate-800 px-2.5 py-1.5 text-[11px] font-bold text-slate-300">🏠 Home Store (auto): <span className="text-emerald-300">{homeStoreNameById.get(Number(partner.home_store_id)) || 'Not assigned'}</span></p></div></div><div className="flex shrink-0 flex-col items-end gap-2"><label className="text-xs font-bold uppercase tracking-wider text-slate-400">Home Store (manual change)<select value={partner.home_store_id ?? ''} onChange={(event) => updateHomeStore(partner, event.target.value)} className="mt-1.5 block rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-bold normal-case text-white outline-none focus:border-emerald-500"><option value="">Not assigned</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.store_name}</option>)}</select></label><label className="text-xs font-bold uppercase tracking-wider text-slate-400">Approval status<select value={partner.approval_status || 'pending'} onChange={(event) => updateApprovalStatus(partner, event.target.value)} className="mt-1.5 block rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-bold normal-case text-white outline-none focus:border-emerald-500"><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label></div></div><div className="mt-5 grid gap-3 sm:grid-cols-3">{[['Aadhar Card', partner.aadhar_card_url], ['Driving License', partner.driving_license_url], ['PAN Card', partner.pan_card_url]].map(([label, url]) => <div key={label} className="rounded-xl bg-slate-800 p-3"><p className="text-xs font-bold text-slate-300">{label}</p>{url ? <SignedDocLink stored={url} className="mt-2 inline-flex items-center text-xs font-bold text-emerald-400 hover:underline">View document</SignedDocLink> : <p className="mt-2 text-xs text-amber-300">Not uploaded</p>}</div>)}</div></article>)}</section>}
       {active === 'coupons' && <section className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-black">Coupons</h2><p className="text-xs text-slate-500">{q ? `${filteredCoupons.length} of ${coupons.length} coupons` : `${coupons.length} coupons`}</p></div><button onClick={() => openCouponModal(null)} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950"><Plus className="h-4 w-4" />Add Coupon</button></div>{filteredCoupons.length === 0 ? <div className="rounded-2xl bg-slate-800 p-8 text-center text-sm text-slate-400">{q ? `No coupons match “${search.trim()}”.` : 'No coupons yet. Click “Add Coupon” to create one.'}</div> : <table className="w-full min-w-[900px] text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">Code</th><th className="p-3">Discount</th><th className="p-3">Min Order</th><th className="p-3">Expiry</th><th className="p-3">Usage</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-800">{filteredCoupons.map((coupon) => <tr key={coupon.id}><td className="p-3"><span className="rounded-lg bg-emerald-950 px-2.5 py-1 font-black tracking-wider text-emerald-300">{coupon.code}</span></td><td className="p-3 font-bold text-white">{coupon.discount_type === 'flat' ? `₹${coupon.discount_value} off` : `${coupon.discount_value}% off`}</td><td className="p-3 text-slate-400">₹{coupon.min_order_amount ?? 0}</td><td className="p-3 text-slate-400">{coupon.expiry_date ? new Date(coupon.expiry_date).toLocaleDateString('en-IN') : 'No expiry'}</td><td className="p-3 text-slate-400">{coupon.used_count ?? 0}{coupon.usage_limit ? ` / ${coupon.usage_limit}` : ' / ∞'}</td><td className="p-3"><button type="button" role="switch" aria-checked={coupon.is_active !== false} aria-label={`Toggle ${coupon.code}`} onClick={() => toggleCoupon(coupon)} className={`relative h-6 w-11 shrink-0 rounded-full transition ${coupon.is_active !== false ? 'bg-emerald-500' : 'bg-slate-700'}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${coupon.is_active !== false ? 'left-[22px]' : 'left-0.5'}`} /></button></td><td className="p-3"><button onClick={() => openCouponModal(coupon)} className="mr-2 text-blue-300" aria-label={`Edit ${coupon.code}`}><Pencil className="h-4 w-4" /></button><button onClick={() => deleteCoupon(coupon)} className="text-rose-300" aria-label={`Delete ${coupon.code}`}><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table>}</section>}
     </div></main>
-    {productModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"><form onSubmit={saveProduct} className="grid max-h-[90vh] w-full max-w-2xl gap-3 overflow-y-auto rounded-2xl bg-slate-900 p-6 sm:grid-cols-2"><div className="flex items-center justify-between sm:col-span-2"><h2 className="font-black">{editingProduct ? 'Edit Product' : 'Add Product'}</h2><button type="button" onClick={() => setProductModal(false)}><X /></button></div>{['name', 'category', 'unit', 'description'].map((field) => <input key={field} required value={productForm[field]} onChange={(event) => setProductForm({ ...productForm, [field]: event.target.value })} placeholder={field} className={inputClass} />)}<input required type="number" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="price" className={inputClass} /><input type="number" value={productForm.stock} onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })} placeholder="stock" className={inputClass} /><label className="flex items-center gap-2 text-xs sm:col-span-2"><ImagePlus /> Image <input required={!editingProduct} type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; setImageFile(file); setImagePreview(file ? URL.createObjectURL(file) : ''); }} /></label>{imagePreview && <img src={imagePreview} alt="Preview" className="h-20 w-20 rounded object-contain" />}<button className="rounded-xl bg-emerald-500 p-3 font-black text-slate-950 sm:col-span-2">Save Product</button></form></div>}
+    {productModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"><form onSubmit={saveProduct} className="grid max-h-[90vh] w-full max-w-2xl gap-3 overflow-y-auto rounded-2xl bg-slate-900 p-6 sm:grid-cols-2"><div className="flex items-center justify-between sm:col-span-2"><h2 className="font-black">{editingProduct ? 'Edit Product' : 'Add Product'}</h2><button type="button" onClick={() => setProductModal(false)}><X /></button></div>{['name', 'category', 'unit', 'description'].map((field) => <input key={field} required value={productForm[field]} onChange={(event) => setProductForm({ ...productForm, [field]: event.target.value })} placeholder={field} className={inputClass} />)}<input required type="number" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="price" className={inputClass} /><input type="number" value={productForm.stock_quantity} onChange={(event) => setProductForm({ ...productForm, stock_quantity: event.target.value })} placeholder="stock_quantity" className={inputClass} /><input type="number" value={productForm.low_stock_threshold} onChange={(event) => setProductForm({ ...productForm, low_stock_threshold: event.target.value })} placeholder="low stock alert at" title="Is number se kam hone par Low Stock alert" className={inputClass} /><label className="flex items-center gap-2 text-xs sm:col-span-2"><ImagePlus /> Image <input required={!editingProduct} type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; setImageFile(file); setImagePreview(file ? URL.createObjectURL(file) : ''); }} /></label>{imagePreview && <img src={imagePreview} alt="Preview" className="h-20 w-20 rounded object-contain" />}<button className="rounded-xl bg-emerald-500 p-3 font-black text-slate-950 sm:col-span-2">Save Product</button></form></div>}
     {couponModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"><form onSubmit={saveCoupon} className="grid max-h-[90vh] w-full max-w-2xl gap-3 overflow-y-auto rounded-2xl bg-slate-900 p-6 sm:grid-cols-2"><div className="flex items-center justify-between sm:col-span-2"><h2 className="font-black">{editingCoupon ? 'Edit Coupon' : 'Add Coupon'}</h2><button type="button" onClick={() => setCouponModal(false)}><X /></button></div><label className="text-xs font-bold text-slate-400">Code<input required value={couponForm.code} onChange={(event) => setCouponForm({ ...couponForm, code: event.target.value.toUpperCase() })} placeholder="SAVE20" className={`${inputClass} mt-1.5 uppercase`} /></label><label className="text-xs font-bold text-slate-400">Discount type<select value={couponForm.discount_type} onChange={(event) => setCouponForm({ ...couponForm, discount_type: event.target.value })} className={`${inputClass} mt-1.5`}><option value="percentage">Percentage (%)</option><option value="flat">Flat (₹)</option></select></label><label className="text-xs font-bold text-slate-400">Discount value<input required type="number" min="1" value={couponForm.discount_value} onChange={(event) => setCouponForm({ ...couponForm, discount_value: event.target.value })} placeholder={couponForm.discount_type === 'flat' ? '50' : '20'} className={`${inputClass} mt-1.5`} /></label><label className="text-xs font-bold text-slate-400">Min order amount (₹)<input type="number" min="0" value={couponForm.min_order_amount} onChange={(event) => setCouponForm({ ...couponForm, min_order_amount: event.target.value })} placeholder="0" className={`${inputClass} mt-1.5`} /></label><label className="text-xs font-bold text-slate-400">Expiry date<input type="date" value={couponForm.expiry_date} onChange={(event) => setCouponForm({ ...couponForm, expiry_date: event.target.value })} className={`${inputClass} mt-1.5`} /></label><label className="text-xs font-bold text-slate-400">Usage limit (blank = unlimited)<input type="number" min="1" value={couponForm.usage_limit} onChange={(event) => setCouponForm({ ...couponForm, usage_limit: event.target.value })} placeholder="Unlimited" className={`${inputClass} mt-1.5`} /></label><label className="flex items-center gap-2 text-xs font-bold text-slate-300 sm:col-span-2"><button type="button" role="switch" aria-checked={couponForm.is_active !== false} onClick={() => setCouponForm({ ...couponForm, is_active: !(couponForm.is_active !== false) })} className={`relative h-6 w-11 shrink-0 rounded-full transition ${couponForm.is_active !== false ? 'bg-emerald-500' : 'bg-slate-700'}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${couponForm.is_active !== false ? 'left-[22px]' : 'left-0.5'}`} /></button>Active</label><button className="rounded-xl bg-emerald-500 p-3 font-black text-slate-950 sm:col-span-2">Save Coupon</button></form></div>}
   </div>;
 };

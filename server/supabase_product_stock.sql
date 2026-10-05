@@ -1,8 +1,10 @@
 -- ===================================================
--- SUPERCART REAL-TIME PRODUCT STOCK (atomic, race-safe)
--- Supabase SQL Editor me ek baar RUN karo.
--- products.stock / in_stock pehle se hain — ye file sirf
--- atomic decrement + auto-sync jodti hai (existing data untouched).
+-- SUPERCART REAL-TIME PRODUCT STOCK (atomic, race-safe) — v1
+-- NOTE: iske BAAD server/supabase_product_stock_columns.sql RUN karo.
+-- v2 canonical columns (stock_quantity / low_stock_threshold / is_in_stock)
+-- jodta hai, RPCs ko un par re-create karta hai aur is file wale
+-- trg_sync_product_in_stock ko unified trigger se replace karta hai.
+-- Dono files is order me chalao: pehle ye, phir v2. Re-run safe hai.
 -- ===================================================
 
 -- 1. in_stock ko hamesha stock se sync rakho (admin manual edit bhi safe).

@@ -7,9 +7,11 @@ import {
   LogOut,
   Mail,
   MapPin,
+  Minus,
   Package,
   PackageCheck,
   Phone,
+  Plus,
   RefreshCw,
   Store,
   Truck,
@@ -95,6 +97,24 @@ const numOrNull = (v) => {
   return null;
 };
 
+// ---- Products stock helpers (canonical: stock_quantity / is_in_stock /
+// low_stock_threshold; purane stock/in_stock fallback — sync trigger mirror) ----
+const stockQtyOf = (p) => {
+  const n = Number(p?.stock_quantity ?? p?.stock);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+};
+const stockThresholdOf = (p) => {
+  const t = Number(p?.low_stock_threshold);
+  return Number.isFinite(t) && t >= 0 ? Math.floor(t) : 5;
+};
+// 'out' (0) | 'low' (threshold se kam, par 0 nahi) | 'ok'
+const stockStateOf = (p) => {
+  const q = stockQtyOf(p);
+  if (q <= 0) return 'out';
+  if (q <= stockThresholdOf(p)) return 'low';
+  return 'ok';
+};
+
 const statusBadgeCls = (status) => {
   const s = statusLower(status);
   if (NEED_PACK_STATUSES.has(s)) return 'bg-amber-400 text-slate-950';
@@ -156,9 +176,13 @@ const StoreDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
-  const [tab, setTab] = useState('new'); // new | packed | all
+  const [tab, setTab] = useState('new'); // new | packed | all | products
   const [packingId, setPackingId] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
+  // Products section: apne store(s) ke products + per-row stock editing state.
+  const [storeProducts, setStoreProducts] = useState([]);
+  const [updatingStockId, setUpdatingStockId] = useState(null);
+  const [stockDrafts, setStockDrafts] = useState({}); // productId -> typed input string
   const [nowTick, setNowTick] = useState(() => Date.now());
   const toastTimerRef = useRef(null);
 
@@ -240,6 +264,36 @@ const StoreDashboard = () => {
     setOrders(rows);
   }, []);
 
+  // Apne store(s) ke products — global (store_id NULL) + apne stores wale.
+  // Naye columns na bane hon (migration pending) to purane stock par fallback.
+  const loadProducts = useCallback(async (ids) => {
+    const list = (ids || []).map((v) => Number(v)).filter((n) => !Number.isNaN(n));
+    if (list.length === 0) {
+      setStoreProducts([]);
+      return;
+    }
+    let rows = null;
+    try {
+      const res = await supabase
+        .from('products')
+        .select('id,name,image,unit,stock_quantity,low_stock_threshold,is_in_stock,store_id')
+        .order('name', { ascending: true });
+      if (res.error) throw res.error;
+      rows = res.data;
+    } catch (e) {
+      if (!/stock_quantity|column|schema cache/i.test(e?.message || '')) throw e;
+      const res = await supabase
+        .from('products')
+        .select('id,name,image,unit,stock,in_stock,store_id')
+        .order('name', { ascending: true });
+      if (res.error) throw res.error;
+      rows = res.data;
+    }
+    setStoreProducts(
+      (rows || []).filter((p) => p.store_id == null || list.includes(Number(p.store_id))),
+    );
+  }, []);
+
   // Init: role check -> store_staff link -> stores -> orders
   useEffect(() => {
     let mounted = true;
@@ -291,6 +345,7 @@ const StoreDashboard = () => {
         if (mounted) setStores(storeRows || ids.map((id) => ({ id })));
 
         await loadOrders(ids);
+        await loadProducts(ids);
         if (mounted) setLoading(false);
       } catch (e) {
         if (mounted) {
@@ -303,7 +358,7 @@ const StoreDashboard = () => {
     return () => {
       mounted = false;
     };
-  }, [loadOrders, navigate]);
+  }, [loadOrders, loadProducts, navigate]);
 
   // Order sound: file pehle se preload + pehle click par autoplay unlock.
   // Bina iske Chrome pehla sound "NotAllowedError" se block kar deta hai
@@ -348,6 +403,25 @@ const StoreDashboard = () => {
     };
   }, [storeIds, loadOrders, showToast]);
 
+  // Realtime: products table me koi bhi change (order se stock ghata, admin
+  // ya is panel se update hua) turant list me — alag polling nahi chahiye.
+  useEffect(() => {
+    if (storeIds.length === 0) return undefined;
+    const channel = supabase
+      .channel(`store-products-${storeIds.join('-')}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async () => {
+        try {
+          await loadProducts(storeIds);
+        } catch {
+          /* agla refresh/retry sambhal lega */
+        }
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [storeIds, loadProducts]);
+
   const handlePack = async (order) => {
     if (packingId) return;
     setPackingId(order.id);
@@ -374,6 +448,52 @@ const StoreDashboard = () => {
     }
   };
 
+  // Stock turant Supabase me save karo (sync trigger purane columns mirror
+  // karta hai). +/- 1 karta hai, Update exact typed quantity likhta hai.
+  const saveStock = async (product, nextQty) => {
+    const qty = Math.floor(Number(nextQty));
+    if (!product || !Number.isFinite(qty) || qty < 0) {
+      setError('Enter a valid quantity (0 or more).');
+      return;
+    }
+    if (updatingStockId) return;
+    setUpdatingStockId(product.id);
+    setError('');
+    try {
+      let updError = null;
+      try {
+        const res = await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
+        updError = res.error;
+        // Naye columns abhi bane na hon to purane `stock` par likho.
+        if (updError && /stock_quantity|column|schema cache/i.test(updError.message || '')) {
+          const retry = await supabase.from('products').update({ stock: qty }).eq('id', product.id);
+          updError = retry.error;
+        }
+      } catch (e) {
+        updError = e;
+      }
+      if (updError) throw updError;
+      setStockDrafts((prev) => {
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+      await loadProducts(storeIds);
+      showToast(`${product.name}: stock updated to ${qty}`);
+    } catch (e) {
+      setError(e.message || 'Could not update stock. Please try again.');
+    } finally {
+      setUpdatingStockId(null);
+    }
+  };
+
+  const bumpStock = (product, delta) => saveStock(product, stockQtyOf(product) + delta);
+
+  const saveDraftStock = (product) => {
+    const raw = stockDrafts[product.id];
+    saveStock(product, raw !== undefined ? raw : stockQtyOf(product));
+  };
+
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
@@ -390,10 +510,22 @@ const StoreDashboard = () => {
   };
 
   const visibleOrders = useMemo(() => {
+    if (tab === 'products') return [];
     if (tab === 'new') return orders.filter((o) => NEED_PACK_STATUSES.has(statusLower(o.status)));
     if (tab === 'packed') return orders.filter((o) => PACKED_STATUSES.has(statusLower(o.status)));
     return orders;
   }, [orders, tab]);
+
+  // Products: Out of Stock sabse upar, phir Low Stock, phir baaki (naam se).
+  const sortedProducts = useMemo(() => {
+    const rank = (p) => {
+      const s = stockStateOf(p);
+      return s === 'out' ? 0 : s === 'low' ? 1 : 2;
+    };
+    return [...storeProducts].sort(
+      (a, b) => rank(a) - rank(b) || String(a.name || '').localeCompare(String(b.name || '')),
+    );
+  }, [storeProducts]);
 
   const newCount = orders.filter((o) => NEED_PACK_STATUSES.has(statusLower(o.status))).length;
 
@@ -529,6 +661,7 @@ const StoreDashboard = () => {
             { id: 'new', label: `To Pack (${newCount})` },
             { id: 'packed', label: 'Packed & Beyond' },
             { id: 'all', label: `All (${orders.length})` },
+            { id: 'products', label: `Products (${storeProducts.length})` },
           ].map((t) => (
             <button
               key={t.id}
@@ -657,7 +790,123 @@ const StoreDashboard = () => {
           </div>
         )}
 
-        {visibleOrders.length === 0 ? (
+        {tab === 'products' ? (
+          sortedProducts.length === 0 ? (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-12 text-center">
+              <Package className="mx-auto h-12 w-12 text-slate-600" />
+              <h2 className="mt-4 text-lg font-black">No products found</h2>
+              <p className="mt-1 text-xs text-slate-400">Products for your store(s) will appear here.</p>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {sortedProducts.map((p) => {
+                const qty = stockQtyOf(p);
+                const th = stockThresholdOf(p);
+                const state = stockStateOf(p);
+                const busy = updatingStockId === p.id;
+                const draft = stockDrafts[p.id];
+                const storeName = p.store_id == null
+                  ? 'All stores'
+                  : (stores.find((s) => Number(s.id) === Number(p.store_id))?.store_name || `Store #${p.store_id}`);
+                return (
+                  <li
+                    key={p.id}
+                    className={`overflow-hidden rounded-3xl border bg-slate-900 ${
+                      state === 'out'
+                        ? 'border-rose-500/60'
+                        : state === 'low'
+                          ? 'border-amber-400/50'
+                          : 'border-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      {p.image ? (
+                        <img
+                          src={p.image}
+                          alt=""
+                          loading="lazy"
+                          className="h-12 w-12 shrink-0 rounded-xl bg-slate-800 object-contain"
+                          onError={(e) => { try { e.currentTarget.style.display = 'none'; } catch { /* ignore */ } }}
+                        />
+                      ) : (
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-800">
+                          <Package className="h-5 w-5 text-slate-500" />
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black text-white">{p.name}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          {p.unit || '—'} · {storeName}
+                        </p>
+                        <p className={`mt-1 text-xs font-black ${
+                          state === 'out' ? 'text-rose-400' : state === 'low' ? 'text-amber-300' : 'text-emerald-300'
+                        }`}>
+                          {state === 'out'
+                            ? 'Out of Stock — 0 available'
+                            : state === 'low'
+                              ? `Low Stock — only ${qty} left (alert at ${th})`
+                              : `${qty} available`}
+                        </p>
+                      </div>
+                      {state === 'out' ? (
+                        <span className="shrink-0 rounded-full bg-rose-600 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-white">
+                          Out of Stock
+                        </span>
+                      ) : state === 'low' ? (
+                        <span className="shrink-0 rounded-full bg-amber-400 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-950">
+                          Low Stock
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">
+                          In Stock
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3">
+                      <button
+                        type="button"
+                        aria-label={`Decrease stock of ${p.name}`}
+                        disabled={busy || qty <= 0}
+                        onClick={() => bumpStock(p, -1)}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Minus className="h-5 w-5" />
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        inputMode="numeric"
+                        aria-label={`Exact stock quantity for ${p.name}`}
+                        disabled={busy}
+                        value={draft !== undefined ? draft : String(qty)}
+                        onChange={(e) => setStockDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveDraftStock(p); }}
+                        className="h-11 w-20 shrink-0 rounded-xl border border-slate-700 bg-slate-950 px-2 text-center text-sm font-black text-white outline-none focus:border-emerald-500 disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Increase stock of ${p.name}`}
+                        disabled={busy}
+                        onClick={() => bumpStock(p, 1)}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Plus className="h-5 w-5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => saveDraftStock(p)}
+                        className="h-11 flex-1 rounded-xl bg-emerald-500 text-xs font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {busy ? 'Saving…' : 'Update'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : visibleOrders.length === 0 ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-900 p-12 text-center">
             <Package className="mx-auto h-12 w-12 text-slate-600" />
             <h2 className="mt-4 text-lg font-black">

@@ -479,7 +479,15 @@ const Cart = () => {
 
             {/* List of Cart Items */}
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs divide-y divide-slate-100 overflow-hidden">
-              {cartItems.map((item) => (
+              {cartItems.map((item) => {
+                // Fresh stock se + cap: available se zyada cart me badhne na do.
+                const stockRow = stockMap.get(String(item.id));
+                const stockAvail = stockRow && (stockRow.stock_quantity ?? stockRow.stock) != null
+                  ? Math.max(0, Math.floor(Number(stockRow.stock_quantity ?? stockRow.stock) || 0))
+                  : null;
+                const stockOut = stockRow ? (stockRow.is_in_stock ?? stockRow.in_stock) === false || (stockAvail != null && stockAvail <= 0) : false;
+                const atMax = stockAvail != null && item.quantity >= Math.max(1, stockAvail);
+                return (
                 <div
                   key={item.id}
                   className="p-3 sm:p-5 flex items-center justify-between gap-2 sm:gap-4 hover:bg-slate-50/50 transition"
@@ -509,21 +517,15 @@ const Cart = () => {
                         </span>
                       )}
                     </div>
-                    {(() => {
-                      const row = stockMap.get(String(item.id));
-                      if (!row || row.stock == null) return null;
-                      const avail = Math.max(0, Math.floor(Number(row.stock) || 0));
-                      const short = row.in_stock === false || avail <= 0 || item.quantity > avail;
-                      return (
-                        <p className={`mt-1 text-[11px] font-bold ${short ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          {short
-                            ? avail <= 0
-                              ? 'Out of Stock'
-                              : `Only ${avail} available`
-                            : `${avail} available`}
-                        </p>
-                      );
-                    })()}
+                    {stockAvail == null ? null : (
+                      <p className={`mt-1 text-[11px] font-bold ${stockOut || item.quantity > stockAvail ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {stockOut
+                          ? 'Out of Stock'
+                          : item.quantity > stockAvail
+                            ? `Only ${stockAvail} available`
+                            : `${stockAvail} available`}
+                      </p>
+                    )}
                   </div>
 
                   {/* Quantity Stepper & Remove */}
@@ -541,8 +543,9 @@ const Cart = () => {
                       </span>
                       <button
                         onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                        className="p-1.5 sm:px-2.5 sm:py-2 hover:bg-emerald-700 active:bg-emerald-800 transition cursor-pointer"
-                        title="Increase"
+                        disabled={atMax || stockOut}
+                        className="p-1.5 sm:px-2.5 sm:py-2 hover:bg-emerald-700 active:bg-emerald-800 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                        title={stockOut ? 'Out of Stock' : atMax ? `Only ${stockAvail} available` : 'Increase'}
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -557,7 +560,8 @@ const Cart = () => {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Savings Callout */}
