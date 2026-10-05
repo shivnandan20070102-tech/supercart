@@ -41,13 +41,15 @@ CREATE POLICY "Admin complaints read" ON public.complaints
   USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
     OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
 
--- Complaint raise karo: sirf apne naam par, status hamesha pending.
+-- Complaint raise karo: sirf apne naam par, status hamesha pending,
+-- admin_response hamesha blank (user fake admin reply na bhar sake).
 DROP POLICY IF EXISTS "Own complaint insert" ON public.complaints;
 CREATE POLICY "Own complaint insert" ON public.complaints
   FOR INSERT TO authenticated
   WITH CHECK (complainant_id = auth.uid()::text
     AND complainant_type IN ('customer', 'delivery_partner', 'store_manager')
-    AND status = 'pending');
+    AND status = 'pending'
+    AND (admin_response = '' OR admin_response IS NULL));
 
 -- Status + admin reply: SIRF admin.
 DROP POLICY IF EXISTS "Admin complaints update" ON public.complaints;
@@ -73,17 +75,55 @@ DROP POLICY IF EXISTS "Complaint photos public read" ON storage.objects;
 CREATE POLICY "Complaint photos public read" ON storage.objects
   FOR SELECT USING (bucket_id = 'complaint-photos');
 
+-- FIX: client path hai 'complaints/<uid>/<file>' (complaints.js dekho),
+-- isliye folder [1]='complaints', [2]=uid hota hai. Purana check ([1]=uid)
+-- har photo upload ko "new row violates row-level security policy" se fail
+-- karta tha. Dono layouts allow karo (naya + backward-compat '<uid>/<file>').
 DROP POLICY IF EXISTS "Complaint photos owner upload" ON storage.objects;
 CREATE POLICY "Complaint photos owner upload" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'complaint-photos'
-    AND (storage.foldername(name))[1] = auth.uid()::text);
+    AND (
+      ((storage.foldername(name))[1] = 'complaints'
+        AND (storage.foldername(name))[2] = auth.uid()::text)
+      OR (storage.foldername(name))[1] = auth.uid()::text
+    ));
 
 DROP POLICY IF EXISTS "Complaint photos owner update" ON storage.objects;
 CREATE POLICY "Complaint photos owner update" ON storage.objects
   FOR UPDATE TO authenticated
-  USING (bucket_id = 'complaint-photos' AND (storage.foldername(name))[1] = auth.uid()::text)
-  WITH CHECK (bucket_id = 'complaint-photos' AND (storage.foldername(name))[1] = auth.uid()::text);
+  USING (bucket_id = 'complaint-photos'
+    AND (
+      ((storage.foldername(name))[1] = 'complaints'
+        AND (storage.foldername(name))[2] = auth.uid()::text)
+      OR (storage.foldername(name))[1] = auth.uid()::text
+    ))
+  WITH CHECK (bucket_id = 'complaint-photos'
+    AND (
+      ((storage.foldername(name))[1] = 'complaints'
+        AND (storage.foldername(name))[2] = auth.uid()::text)
+      OR (storage.foldername(name))[1] = auth.uid()::text
+    ));
+
+-- Owner apni photo delete kar sake (retry/cancel case). Admin read public
+-- policy se covered hai; bucket private ho to bhi admin dekh sake isliye
+-- explicit admin SELECT (existing users-table pattern, RLS ON rehta hai).
+DROP POLICY IF EXISTS "Complaint photos owner delete" ON storage.objects;
+CREATE POLICY "Complaint photos owner delete" ON storage.objects
+  FOR DELETE TO authenticated
+  USING (bucket_id = 'complaint-photos'
+    AND (
+      ((storage.foldername(name))[1] = 'complaints'
+        AND (storage.foldername(name))[2] = auth.uid()::text)
+      OR (storage.foldername(name))[1] = auth.uid()::text
+    ));
+
+DROP POLICY IF EXISTS "Complaint photos admin read" ON storage.objects;
+CREATE POLICY "Complaint photos admin read" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'complaint-photos'
+    AND ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+      OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')));
 
 -- Realtime (nayi complaint turant admin panel me).
 ALTER TABLE public.complaints REPLICA IDENTITY FULL;
