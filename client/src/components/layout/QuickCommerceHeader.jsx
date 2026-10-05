@@ -12,16 +12,19 @@ import {
   Search,
   ShoppingCart,
   Sparkles,
+  Store,
   User,
   Wheat,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useStore } from '../../context/StoreContext';
 import useDeliveryAddress from '../../hooks/useDeliveryAddress';
 import AddressPicker from '../grocery/AddressPicker';
 import { CATEGORIES } from '../../data/mockGroceryData';
 import {
   DELIVERY_ETA_MINUTES,
   SEARCH_SUGGESTIONS,
+  formatDistance,
 } from '../../config/store';
 
 const CATEGORY_ICONS = {
@@ -44,6 +47,14 @@ const shortName = (name) => (name === 'All Categories' ? 'All' : name);
 const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, setSelectedCategory }) => {
   const { user } = useAuth();
   const { savedAddress, saveAddress } = useDeliveryAddress();
+  // Nearest-store badge: selected address/GPS se StoreContext jo nearest ACTIVE
+  // store (5km rule) resolve karta hai, wahi reuse hota hai — koi duplicate
+  // distance logic nahi. Address change par userCoords badalta hai aur ye
+  // badge automatically re-render hota hai.
+  const { nearestStore, serviceable, hasLocation, nearestLoading } = useStore();
+  const servingStore = hasLocation && serviceable === true ? nearestStore : null;
+  const distanceLabel =
+    servingStore?.distanceKm != null ? formatDistance(servingStore.distanceKm) : '';
   const [pickerOpen, setPickerOpen] = useState(false);
   const [wordIndex, setWordIndex] = useState(0);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -250,6 +261,30 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
                   <p className="whitespace-nowrap text-xl font-black tracking-tight">
                     <span className="text-amber-300">{DELIVERY_ETA_MINUTES}</span> minutes
                   </p>
+                  {/* Nearest-store distance badge — selected address se dynamic
+                      store name + actual calculated distance (5km rule ke andar
+                      hi dikhta hai). Desktop/mobile dono par visible. */}
+                  {servingStore ? (
+                    <span
+                      data-testid="nearest-store-badge"
+                      aria-live="polite"
+                      title={`${servingStore.store_name} • ${distanceLabel}`}
+                      className="mt-1 inline-flex max-w-[52vw] items-center gap-1 truncate rounded-full border border-emerald-200/40 bg-emerald-500 px-2.5 py-[3px] text-[11px] font-bold leading-none text-white shadow sm:max-w-[280px]"
+                    >
+                      <Store className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      <span className="truncate">
+                        {servingStore.store_name} • {distanceLabel}
+                      </span>
+                    </span>
+                  ) : nearestLoading && hasLocation ? (
+                    <span
+                      data-testid="nearest-store-badge-loading"
+                      aria-live="polite"
+                      className="mt-1 inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/15 px-2.5 py-[3px] text-[11px] font-bold leading-none text-emerald-50"
+                    >
+                      Finding nearest store…
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
