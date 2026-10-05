@@ -36,15 +36,26 @@ export const StoreProvider = ({ children }) => {
   const [storesAvailable, setStoresAvailable] = useState(true);
   const resolveRef = useRef(0);
 
-  // Saved address badle (dusre component/tab se) to coords sync karo
+  // Saved address badle (dusre component/tab se) to coords sync karo.
+  // IMPORTANT: sirf tab apply karo jab stored address ACTUALLY badla ho.
+  // Pehle har 2s poll saved-address coords ko force karta tha, jisse "Try my
+  // current location" wala fresh GPS fix 2 second me wapas overwrite ho jata
+  // tha aur 5km re-check kabhi stick nahi karta tha. Ab unchanged storage
+  // userCoords ko haath nahi lagata — GPS fix bana rehta hai jab tak user
+  // picker se naya address save nahi karta.
+  const lastAddressKeyRef = useRef(null);
   useEffect(() => {
+    const keyOf = (c) => (c ? `${c.lat},${c.lng}` : '');
+    // Initial state readDeliveryCoords() se hi aaya tha — use baseline banao
+    // taaki pehla poll redundant set na kare.
+    lastAddressKeyRef.current = keyOf(readDeliveryCoords());
     const syncFromStorage = () => {
       const coords = readDeliveryCoords();
-      if (coords) {
-        setUserCoords((prev) => (prev?.lat === coords.lat && prev?.lng === coords.lng ? prev : coords));
-      }
+      const key = keyOf(coords);
+      if (!key || key === lastAddressKeyRef.current) return;
+      lastAddressKeyRef.current = key;
+      setUserCoords((prev) => (prev?.lat === coords.lat && prev?.lng === coords.lng ? prev : coords));
     };
-    syncFromStorage();
     window.addEventListener('storage', syncFromStorage);
     // Same-tab save par 'storage' event fire nahi hota — chhota poll rakho
     const timer = window.setInterval(syncFromStorage, 2000);
