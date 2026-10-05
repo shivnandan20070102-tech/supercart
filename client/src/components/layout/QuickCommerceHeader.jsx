@@ -268,12 +268,12 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
                     <span
                       data-testid="nearest-store-badge"
                       aria-live="polite"
-                      title={`${servingStore.store_name} • ${distanceLabel}`}
+                      title={distanceLabel}
                       className="mt-1 inline-flex max-w-[52vw] items-center gap-1 truncate rounded-full border border-emerald-200/40 bg-emerald-500 px-2.5 py-[3px] text-[11px] font-bold leading-none text-white shadow sm:max-w-[280px]"
                     >
                       <Store className="h-3 w-3 shrink-0" aria-hidden="true" />
                       <span className="truncate">
-                        {servingStore.store_name} • {distanceLabel}
+                        {distanceLabel}
                       </span>
                     </span>
                   ) : nearestLoading && hasLocation ? (
