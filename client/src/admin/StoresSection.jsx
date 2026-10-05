@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Loader2,
   MapPin,
+  Package,
   Pencil,
   Plus,
   Store as StoreIcon,
@@ -76,6 +77,10 @@ const StoresSection = ({ searchQuery = '' }) => {
 
   const [deleteTarget, setDeleteTarget] = useState(null); // store row | null (confirmation popup)
   const [deleting, setDeleting] = useState(false);
+  // Store detail modal: naam/address/manager + poori inventory (Realtime).
+  const [detailStore, setDetailStore] = useState(null); // store row | null
+  const [detailProducts, setDetailProducts] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const showNotice = (type, text) => setNotice({ type, text });
 
@@ -415,6 +420,61 @@ const StoresSection = ({ searchQuery = '' }) => {
     }
   };
 
+  // Store detail inventory: is store ke (store_id) + global (NULL) products.
+  // Naye columns na bane hon to purane stock par fallback (panel na toote).
+  const loadDetailProducts = useCallback(async (storeId) => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id,name,image,unit,price,stock_quantity,low_stock_threshold,is_in_stock,store_id')
+        .or(`store_id.eq.${storeId},store_id.is.null`)
+        .order('name', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      if (!/stock_quantity|column|schema cache/i.test(e?.message || '')) throw e;
+      const { data, error } = await supabase
+        .from('products')
+        .select('id,name,image,unit,price,stock,in_stock,store_id')
+        .or(`store_id.eq.${storeId},store_id.is.null`)
+        .order('name', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    }
+  }, []);
+
+  const openStoreDetail = async (store) => {
+    setDetailStore(store);
+    setDetailProducts([]);
+    setDetailLoading(true);
+    try {
+      setDetailProducts(await loadDetailProducts(store.id));
+    } catch (e) {
+      showNotice('error', e.message || 'Could not load store inventory.');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  // Detail modal khula ho to inventory Realtime: manager kuch badle turant dikhe.
+  useEffect(() => {
+    if (!detailStore) return undefined;
+    const sid = detailStore.id;
+    const channel = supabase
+      .channel(`store-inventory-${sid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, async () => {
+        try {
+          setDetailProducts(await loadDetailProducts(sid));
+        } catch {
+          /* agla refresh sambhal lega */
+        }
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [detailStore, loadDetailProducts]);
+
   const q = searchQuery.trim().toLowerCase();
   const filteredStores = q
     ? stores.filter((s) =>
@@ -472,6 +532,9 @@ const StoresSection = ({ searchQuery = '' }) => {
                       </div>
                       <div className="min-w-0">
                         <h3 className="truncate font-black text-white">{store.store_name}</h3>
+                        <p className="mt-0.5 truncate text-[11px] font-bold text-emerald-300">
+                          Manager: {staff.length > 0 ? staff.map((m) => m.name).filter(Boolean).join(', ') : 'Not assigned'}
+                        </p>
                         <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{store.address || 'No address provided'}</p>
                         <p className="mt-1 text-[11px] text-slate-500">
                           {store.latitude}, {store.longitude}
@@ -506,6 +569,16 @@ const StoresSection = ({ searchQuery = '' }) => {
                         className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-[11px] font-black text-sky-300 transition hover:bg-slate-700"
                       >
                         <Pencil className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      {/* Store detail: naam/address/manager + poori inventory (Realtime) */}
+                      <button
+                        type="button"
+                        onClick={() => openStoreDetail(store)}
+                        title="View full inventory"
+                        aria-label={`View inventory of ${store.store_name}`}
+                        className="flex items-center gap-1.5 rounded-lg bg-emerald-950 px-3 py-2 text-[11px] font-black text-emerald-300 transition hover:bg-emerald-900"
+                      >
+                        <Package className="h-3.5 w-3.5" /> Inventory
                       </button>
                       {/* Delete Store — SIRF ADMIN, laal alag button + confirmation popup */}
                       <button
@@ -736,6 +809,85 @@ const StoresSection = ({ searchQuery = '' }) => {
           </div>
         </div>
       )}
+
+      {/* ---- Store Detail Modal: info + manager + FULL inventory (Realtime) ---- */}
+      {detailStore && (() => {
+        const dstaff = staffByStore[Number(detailStore.id)] || [];
+        const outN = detailProducts.filter((p) => Number(p.stock_quantity ?? p.stock ?? 0) <= 0).length;
+        const lowN = detailProducts.filter((p) => {
+          const qn = Number(p.stock_quantity ?? p.stock ?? 0);
+          const th = Number(p.low_stock_threshold);
+          const t = Number.isFinite(th) && th >= 0 ? th : 5;
+          return qn > 0 && qn <= t;
+        }).length;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailStore(null); }}>
+            <div role="dialog" aria-modal="true" aria-label={`Inventory of ${detailStore.store_name}`} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-slate-900 p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-black text-white">{detailStore.store_name}</h2>
+                  <p className="mt-1 flex items-start gap-1 text-xs text-slate-400">
+                    <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                    {detailStore.address || 'Address not available'}
+                  </p>
+                  <p className="mt-1.5 text-xs font-bold text-emerald-300">
+                    Manager: {dstaff.length > 0 ? dstaff.map((m) => `${m.name}${m.email ? ` (${m.email})` : ''}`).join(', ') : 'Not assigned'}
+                  </p>
+                  <p className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-black text-slate-300">{detailProducts.length} products</span>
+                    <span className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-black text-white">{outN} Out</span>
+                    <span className="rounded-full bg-amber-400 px-2.5 py-1 text-[10px] font-black text-slate-950">{lowN} Low</span>
+                    <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-400">Live · auto-updates</span>
+                  </p>
+                </div>
+                <button type="button" onClick={() => setDetailStore(null)} aria-label="Close">
+                  <X className="text-slate-400 hover:text-white" />
+                </button>
+              </div>
+              <div className="mt-4">
+                {detailLoading ? (
+                  <p className="py-8 text-center text-sm text-slate-400">Loading inventory…</p>
+                ) : detailProducts.length === 0 ? (
+                  <p className="rounded-2xl bg-slate-800 p-8 text-center text-sm text-slate-400">No products for this store yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {detailProducts.map((p) => {
+                      const qn = Math.max(0, Math.floor(Number(p.stock_quantity ?? p.stock ?? 0) || 0));
+                      const thRaw = Number(p.low_stock_threshold);
+                      const th = Number.isFinite(thRaw) && thRaw >= 0 ? thRaw : 5;
+                      const st = qn <= 0 ? 'out' : qn <= th ? 'low' : 'ok';
+                      return (
+                        <li key={p.id} className={`flex items-center gap-3 rounded-2xl border bg-slate-950/60 px-3 py-2.5 ${st === 'out' ? 'border-rose-500/50' : st === 'low' ? 'border-amber-400/40' : 'border-slate-800'}`}>
+                          {p.image ? (
+                            <img src={p.image} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-lg bg-slate-800 object-contain" onError={(e) => { try { e.currentTarget.style.display = 'none'; } catch { /* ignore */ } }} />
+                          ) : (
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-800">
+                              <Package className="h-4 w-4 text-slate-500" />
+                            </span>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-black text-white">
+                              {p.name}
+                              {p.store_id == null && <span className="ml-1.5 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold text-slate-400">GLOBAL</span>}
+                            </p>
+                            <p className="text-[11px] text-slate-500">₹{p.price}{p.unit ? ` · ${p.unit}` : ''}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className={`text-sm font-black ${st === 'out' ? 'text-rose-400' : st === 'low' ? 'text-amber-300' : 'text-emerald-300'}`}>{qn}</p>
+                            <p className={`text-[9px] font-black uppercase ${st === 'out' ? 'text-rose-400' : st === 'low' ? 'text-amber-300' : 'text-slate-500'}`}>
+                              {st === 'out' ? 'Out' : st === 'low' ? 'Low' : 'In Stock'}
+                            </p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ---- Manager Modal ---- */}
       {managerModal && (

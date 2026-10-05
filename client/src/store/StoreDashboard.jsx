@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  ImagePlus,
   IndianRupee,
   LogOut,
   Mail,
@@ -10,16 +11,20 @@ import {
   Minus,
   Package,
   PackageCheck,
+  Pencil,
   Phone,
   Plus,
   RefreshCw,
   Store,
+  Trash2,
   Truck,
   User,
+  X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { markOrderPackedApi } from '../services/api';
+import { buildProductPayload, canManageProduct } from './storeProductAccess';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
 import InactivityGuard from '../components/InactivityGuard';
 
@@ -183,6 +188,14 @@ const StoreDashboard = () => {
   const [storeProducts, setStoreProducts] = useState([]);
   const [updatingStockId, setUpdatingStockId] = useState(null);
   const [stockDrafts, setStockDrafts] = useState({}); // productId -> typed input string
+  // Product FULL CONTROL (Add/Edit/Delete) — sirf apne store ke products.
+  const emptyManagedProduct = { name: '', category: '', unit: '', price: '', original_price: '', description: '', image: '', stock_quantity: 50, low_stock_threshold: 5, store_id: '' };
+  const [productModal, setProductModal] = useState(null); // null | { mode: 'add' } | { mode: 'edit', product }
+  const [productForm, setProductForm] = useState(emptyManagedProduct);
+  const [productImageFile, setProductImageFile] = useState(null);
+  const [productImagePreview, setProductImagePreview] = useState('');
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const toastTimerRef = useRef(null);
 
@@ -456,6 +469,11 @@ const StoreDashboard = () => {
       setError('Enter a valid quantity (0 or more).');
       return;
     }
+    // Stock edit bhi sirf apne store ke products par.
+    if (!canManageProduct(product, storeIds)) {
+      setError('You can only update stock of your own store products.');
+      return;
+    }
     if (updatingStockId) return;
     setUpdatingStockId(product.id);
     setError('');
@@ -492,6 +510,116 @@ const StoreDashboard = () => {
   const saveDraftStock = (product) => {
     const raw = stockDrafts[product.id];
     saveStock(product, raw !== undefined ? raw : stockQtyOf(product));
+  };
+
+  // ---- Product FULL CONTROL (Add/Edit/Delete — sirf APNE store ke) ----
+  // Har handler pehle canManageProduct guard lagata hai (UI-level). Asli
+  // enforcement DB RLS karta hai (supabase_store_product_policy.sql) — koi
+  // doosre store ka id guess karke bhi write nahi kar sakta.
+  const openAddProduct = () => {
+    if (storeIds.length === 0) {
+      setError('You are not linked to any store.');
+      return;
+    }
+    setProductForm({ ...emptyManagedProduct, store_id: storeIds.length === 1 ? String(storeIds[0]) : '' });
+    setProductImageFile(null);
+    setProductImagePreview('');
+    setProductModal({ mode: 'add' });
+  };
+
+  const openEditProduct = (product) => {
+    if (!canManageProduct(product, storeIds)) {
+      setError('You can only edit products of your own store.');
+      return;
+    }
+    setProductForm({
+      ...emptyManagedProduct,
+      name: product.name || '',
+      category: product.category || '',
+      unit: product.unit || '',
+      price: product.price ?? '',
+      original_price: product.original_price ?? product.originalPrice ?? '',
+      description: product.description || '',
+      image: product.image || '',
+      stock_quantity: product.stock_quantity ?? product.stock ?? 0,
+      low_stock_threshold: product.low_stock_threshold ?? 5,
+      store_id: String(product.store_id ?? ''),
+    });
+    setProductImageFile(null);
+    setProductImagePreview(product.image || '');
+    setProductModal({ mode: 'edit', product });
+  };
+
+  const saveManagedProduct = async (event) => {
+    event.preventDefault();
+    if (savingProduct) return;
+    // Edit me product apne store ka hi hona chahiye (guard).
+    if (productModal?.mode === 'edit' && !canManageProduct(productModal.product, storeIds)) {
+      setError('You can only edit products of your own store.');
+      return;
+    }
+    // Naya product hamesha APNE store se link hoga (global nahi ban sakta).
+    const targetStoreId = productModal?.mode === 'edit'
+      ? productModal.product.store_id
+      : productForm.store_id;
+    if (!canManageProduct({ store_id: targetStoreId }, storeIds)) {
+      setError('Product must be linked to your own store.');
+      return;
+    }
+    setSavingProduct(true);
+    setError('');
+    try {
+      let image = String(productForm.image || '').trim();
+      if (productImageFile) {
+        const path = `products/${crypto.randomUUID()}-${productImageFile.name}`;
+        const upload = await supabase.storage.from('product-images').upload(path, productImageFile, { contentType: productImageFile.type });
+        if (upload.error) throw upload.error;
+        image = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
+      }
+      const { payload, error: validationError } = buildProductPayload({ ...productForm, image }, targetStoreId);
+      if (validationError) throw new Error(validationError);
+      const result = productModal?.mode === 'edit'
+        ? await supabase.from('products').update(payload).eq('id', productModal.product.id)
+        : await supabase.from('products').insert(payload);
+      if (result.error) throw result.error;
+      setProductModal(null);
+      setProductForm(emptyManagedProduct);
+      setProductImageFile(null);
+      setProductImagePreview('');
+      await loadProducts(storeIds);
+      showToast(productModal?.mode === 'edit' ? 'Product updated.' : 'Product added to your store.');
+    } catch (e) {
+      const raw = e.message || '';
+      setError(/row-level security|violates/i.test(raw)
+        ? 'Not allowed — you can only manage products of your own store.'
+        : raw || 'Could not save product. Please try again.');
+    } finally {
+      setSavingProduct(false);
+    }
+  };
+
+  const deleteManagedProduct = async (product) => {
+    if (!canManageProduct(product, storeIds)) {
+      setError('You can only delete products of your own store.');
+      return;
+    }
+    if (!window.confirm(`Delete "${product.name}" from your store?`)) return;
+    if (deletingProductId) return;
+    setDeletingProductId(product.id);
+    setError('');
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', product.id);
+      if (error) throw error;
+      await loadProducts(storeIds);
+      showToast(`"${product.name}" deleted.`);
+    } catch (e) {
+      const raw = e.message || '';
+      setError(/row-level security|violates/i.test(raw)
+        ? 'Not allowed — you can only delete products of your own store.'
+        : raw || 'Could not delete product. Please try again.');
+    } finally {
+      setDeletingProductId(null);
+    }
   };
 
   const handleLogout = async () => {
@@ -791,7 +919,22 @@ const StoreDashboard = () => {
         )}
 
         {tab === 'products' ? (
-          sortedProducts.length === 0 ? (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold text-slate-400">
+                {sortedProducts.length} product{sortedProducts.length === 1 ? '' : 's'} · your store{storeIds.length > 1 ? 's' : ''} + global
+              </p>
+              {storeIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={openAddProduct}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-black text-slate-950 transition hover:bg-emerald-400 active:scale-95"
+                >
+                  <Plus className="h-4 w-4" /> Add Product
+                </button>
+              )}
+            </div>
+          {sortedProducts.length === 0 ? (
             <div className="rounded-3xl border border-slate-800 bg-slate-900 p-12 text-center">
               <Package className="mx-auto h-12 w-12 text-slate-600" />
               <h2 className="mt-4 text-lg font-black">No products found</h2>
@@ -808,6 +951,9 @@ const StoreDashboard = () => {
                 const storeName = p.store_id == null
                   ? 'All stores'
                   : (stores.find((s) => Number(s.id) === Number(p.store_id))?.store_name || `Store #${p.store_id}`);
+                // FULL CONTROL sirf apne store ke products par (global/doosre
+                // store wale read-only). RLS bhi yehi enforce karta hai.
+                const manageable = canManageProduct(p, storeIds);
                 return (
                   <li
                     key={p.id}
@@ -861,12 +1007,40 @@ const StoreDashboard = () => {
                           In Stock
                         </span>
                       )}
+                      {manageable && (
+                        <span className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label={`Edit ${p.name}`}
+                            title={`Edit ${p.name}`}
+                            onClick={() => openEditProduct(p)}
+                            className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800 text-sky-300 transition hover:bg-slate-700 active:scale-95"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${p.name}`}
+                            title={`Delete ${p.name}`}
+                            disabled={deletingProductId === p.id}
+                            onClick={() => deleteManagedProduct(p)}
+                            className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-950 text-rose-300 transition hover:bg-rose-900 active:scale-95 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </span>
+                      )}
                     </div>
+                    {!manageable && (
+                      <p className="border-t border-slate-800 px-4 py-2 text-[11px] font-bold text-slate-500">
+                        Global product — only Admin can edit. Stock shown read-only.
+                      </p>
+                    )}
                     <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3">
                       <button
                         type="button"
                         aria-label={`Decrease stock of ${p.name}`}
-                        disabled={busy || qty <= 0}
+                        disabled={busy || !manageable || qty <= 0}
                         onClick={() => bumpStock(p, -1)}
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -877,7 +1051,7 @@ const StoreDashboard = () => {
                         min="0"
                         inputMode="numeric"
                         aria-label={`Exact stock quantity for ${p.name}`}
-                        disabled={busy}
+                        disabled={busy || !manageable}
                         value={draft !== undefined ? draft : String(qty)}
                         onChange={(e) => setStockDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveDraftStock(p); }}
@@ -886,7 +1060,7 @@ const StoreDashboard = () => {
                       <button
                         type="button"
                         aria-label={`Increase stock of ${p.name}`}
-                        disabled={busy}
+                        disabled={busy || !manageable}
                         onClick={() => bumpStock(p, 1)}
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -894,7 +1068,7 @@ const StoreDashboard = () => {
                       </button>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || !manageable}
                         onClick={() => saveDraftStock(p)}
                         className="h-11 flex-1 rounded-xl bg-emerald-500 text-xs font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
                       >
@@ -905,7 +1079,8 @@ const StoreDashboard = () => {
                 );
               })}
             </ul>
-          )
+          )}
+          </div>
         ) : visibleOrders.length === 0 ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-900 p-12 text-center">
             <Package className="mx-auto h-12 w-12 text-slate-600" />
@@ -1068,6 +1243,119 @@ const StoreDashboard = () => {
           </div>
         )}
       </main>
+
+      {/* ---- Add/Edit Product Modal — SIRF apne store ke liye ----
+          Naya product hamesha manager ke apne store se link hota hai. */}
+      {productModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <form
+            onSubmit={saveManagedProduct}
+            className="grid max-h-[90vh] w-full max-w-2xl gap-3 overflow-y-auto rounded-2xl bg-slate-900 p-6 sm:grid-cols-2"
+          >
+            <div className="flex items-center justify-between sm:col-span-2">
+              <div>
+                <h2 className="font-black text-white">
+                  {productModal.mode === 'edit' ? `Edit Product — ${productModal.product?.name || ''}` : 'Add Product to My Store'}
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {productModal.mode === 'edit'
+                    ? 'Changes sirf tumhare store ke is product par honge.'
+                    : 'Ye product automatically tumhare store se linked hoga.'}
+                </p>
+              </div>
+              <button type="button" onClick={() => setProductModal(null)} aria-label="Close">
+                <X className="text-slate-400 hover:text-white" />
+              </button>
+            </div>
+            {stores.length > 1 && productModal.mode === 'add' && (
+              <label className="text-xs font-bold text-slate-400 sm:col-span-2">
+                Store *
+                <select
+                  required
+                  value={productForm.store_id}
+                  onChange={(e) => setProductForm({ ...productForm, store_id: e.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500"
+                >
+                  <option value="">Select store…</option>
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>{s.store_name || `Store #${s.id}`}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {['name', 'category', 'unit', 'description'].map((field) => (
+              <input
+                key={field}
+                required
+                value={productForm[field]}
+                onChange={(event) => setProductForm({ ...productForm, [field]: event.target.value })}
+                placeholder={field === 'unit' ? 'unit (e.g. 1 kg)' : field}
+                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+              />
+            ))}
+            <input
+              required
+              type="number"
+              min="0"
+              step="any"
+              value={productForm.price}
+              onChange={(event) => setProductForm({ ...productForm, price: event.target.value })}
+              placeholder="price"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+            />
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={productForm.original_price}
+              onChange={(event) => setProductForm({ ...productForm, original_price: event.target.value })}
+              placeholder="original price (optional)"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+            />
+            <input
+              type="number"
+              min="0"
+              value={productForm.stock_quantity}
+              onChange={(event) => setProductForm({ ...productForm, stock_quantity: event.target.value })}
+              placeholder="stock quantity"
+              title="Stock quantity"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+            />
+            <input
+              type="number"
+              min="0"
+              value={productForm.low_stock_threshold}
+              onChange={(event) => setProductForm({ ...productForm, low_stock_threshold: event.target.value })}
+              placeholder="low stock alert at"
+              title="Is number se kam hone par Low Stock alert"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+            />
+            <label className="flex items-center gap-2 text-xs text-slate-400 sm:col-span-2">
+              <ImagePlus className="h-4 w-4 shrink-0 text-emerald-400" /> Image {productModal.mode === 'add' ? '*' : '(badlne ke liye nayi file chuno)'}
+              <input
+                required={productModal.mode === 'add' && !productForm.image}
+                type="file"
+                accept="image/*"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setProductImageFile(file || null);
+                  setProductImagePreview(file ? URL.createObjectURL(file) : (productForm.image || ''));
+                }}
+                className="text-slate-300"
+              />
+            </label>
+            {productImagePreview && (
+              <img src={productImagePreview} alt="Preview" className="h-20 w-20 rounded-xl bg-slate-800 object-contain" />
+            )}
+            <button
+              disabled={savingProduct}
+              className="rounded-xl bg-emerald-500 p-3 font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60 sm:col-span-2"
+            >
+              {savingProduct ? 'Saving…' : productModal.mode === 'edit' ? 'Save Changes' : 'Add Product'}
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
