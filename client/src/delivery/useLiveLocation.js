@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { LOCATION_STALL_MESSAGE, startRequestWatchdog } from './locationWatchdog';
 
 const FIRST_FIX_OPTIONS = {
   enableHighAccuracy: true,
@@ -63,6 +64,19 @@ const useLiveLocation = () => {
   const [permissionState, setPermissionState] = useState('unknown'); // granted|prompt|denied|unknown
   const watchIdRef = useRef(null);
   const mountedRef = useRef(true);
+  // Latest fix ka mirror — watchdog/timeout handlers ke liye (stale closure se
+  // bachne ke liye; setPosition ke saath-saat update hota hai).
+  const positionRef = useRef(null);
+  // Request budget watchdog ka cancel fn — success/error/retry/unmount par clear.
+  const watchdogCancelRef = useRef(null);
+  const clearWatchdog = () => {
+    try {
+      watchdogCancelRef.current?.();
+    } catch {
+      /* ignore */
+    }
+    watchdogCancelRef.current = null;
+  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -84,6 +98,7 @@ const useLiveLocation = () => {
     })();
     return () => {
       mountedRef.current = false;
+      clearWatchdog();
       try { permStatus?.removeEventListener?.('change', onPermChange); } catch { /* ignore */ }
       if (watchIdRef.current !== null && 'geolocation' in navigator) {
         navigator.geolocation.clearWatch(watchIdRef.current);
@@ -100,14 +115,19 @@ const useLiveLocation = () => {
         (pos) => {
           if (!mountedRef.current) return;
           if (pos?.coords?.latitude === 0 && pos?.coords?.longitude === 0) return;
-          setPosition({
+          const fix = {
             lng: pos.coords.longitude,
             lat: pos.coords.latitude,
             accuracy: pos.coords.accuracy ?? null,
-          });
+          };
+          positionRef.current = fix;
+          setPosition(fix);
         },
         async (err) => {
           if (!mountedRef.current) return;
+          // Pehle se live fix hai to watch glitch ko error mat banao —
+          // dot already dikh raha hai, toast noise hoga.
+          if (positionRef.current) return;
           // watch ka denied = pehle se Blocked — short help dikhao
           const state = await getPermissionState();
           if (mountedRef.current) {
@@ -139,6 +159,21 @@ const useLiveLocation = () => {
     } catch { /* ignore */ }
     setLoading(true);
     setError('');
+    // Watchdog (ROOT-CAUSE FIX): browser kabhi callback na kare (mobile GPS
+    // stall) to loading hamesha true atak jata tha → "Locating…" + spinner
+    // button permanently stuck. Budget khatam, fix na aaya to loading false +
+    // Retry-able message; baad me aane wala natural fix phir bhi apply hoga.
+    clearWatchdog();
+    watchdogCancelRef.current = startRequestWatchdog({
+      hasFix: () => positionRef.current != null,
+      onTimeout: () => {
+        if (!mountedRef.current || positionRef.current) return;
+        // eslint-disable-next-line no-console
+        console.warn('[useLiveLocation] request budget exceeded — unstalling UI');
+        setLoading(false);
+        setError((prev) => prev || LOCATION_STALL_MESSAGE);
+      },
+    });
 
     const onSuccess = (pos) => {
       if (!mountedRef.current) return;
@@ -146,17 +181,21 @@ const useLiveLocation = () => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
       if (typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0)) {
+        clearWatchdog();
         setLoading(false);
         setError('Location is unavailable. Keep WiFi ON on laptop + turn Windows Location Service ON, then retry.');
         return;
       }
       // eslint-disable-next-line no-console
       console.info('[useLiveLocation] fix mila:', lat, lng, '±', pos.coords.accuracy, 'm');
-      setPosition({
+      const fix = {
         lng,
         lat,
         accuracy: pos.coords.accuracy ?? null,
-      });
+      };
+      positionRef.current = fix;
+      setPosition(fix);
+      clearWatchdog();
       setLoading(false);
       setError('');
       startWatch();
@@ -165,7 +204,9 @@ const useLiveLocation = () => {
     const onFatalError = async (err) => {
       if (!mountedRef.current) return;
       const state = await getPermissionState();
-      if (mountedRef.current) setPermissionState(state);
+      if (!mountedRef.current) return;
+      clearWatchdog();
+      setPermissionState(state);
       // eslint-disable-next-line no-console
       console.warn('[useLiveLocation] geolocation error:', err?.code, err?.message, 'perm=', state);
       setLoading(false);
@@ -195,6 +236,7 @@ const useLiveLocation = () => {
       navigator.geolocation.getCurrentPosition(onSuccess, onFirstError, FIRST_FIX_OPTIONS);
     } catch (e) {
       if (mountedRef.current) {
+        clearWatchdog();
         setLoading(false);
         setError(toMessage(e, permissionState));
       }

@@ -24,6 +24,7 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { createOrderApi, validateCouponApi } from '../services/api';
 import { supabase } from '../config/supabase';
+import { fetchStockMap, validateCartStock } from '../services/stock';
 import { findNearestStore } from '../services/nearestStore';
 import LoadingState from '../components/layout/LoadingState';
 import { useStore } from '../context/StoreContext';
@@ -76,6 +77,30 @@ const Cart = () => {
   const [customTipActive, setCustomTipActive] = useState(false);
   const [customTipValue, setCustomTipValue] = useState('');
   const [placedTip, setPlacedTip] = useState(0);
+  // Fresh available stock (checkout guard + per-item display). Best-effort —
+  // fetch fail ho to checkout server-side stock check sambhal lega.
+  const [stockMap, setStockMap] = useState(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = (cartItems || []).map((i) => i?.id).filter((v) => v != null);
+    if (ids.length === 0) {
+      setStockMap(new Map());
+      return undefined;
+    }
+    (async () => {
+      try {
+        const rows = await fetchStockMap(supabase, ids);
+        if (cancelled) return;
+        setStockMap(new Map((rows || []).map((r) => [String(r.id), r])));
+      } catch {
+        if (!cancelled) setStockMap(new Map());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cartItems]);
 
   // Order success ("Thank you") same /cart page par conditional render hota hai,
   // isliye App wala ScrollToTop (pathname change) trigger nahi hota.
@@ -199,6 +224,24 @@ const Cart = () => {
     setCheckoutError('');
     setIsCheckingOut(true);
     try {
+      // Stock guard: stale cart (doosre user ne beech me kharid liya ho) to
+      // order bhejo hi mat — fresh DB stock se exact available batao.
+      try {
+        const freshRows = await fetchStockMap(
+          supabase,
+          (cartItems || []).map((i) => i?.id),
+        );
+        const problems = validateCartStock(cartItems, freshRows);
+        if (problems.length > 0) {
+          const p = problems[0];
+          throw new Error(`Only ${p.available} left for "${p.name}" — please reduce quantity.`);
+        }
+        setStockMap(new Map((freshRows || []).map((r) => [String(r.id), r])));
+      } catch (e) {
+        if (/Only \d+ left for/.test(e?.message || '')) throw e;
+        // Stock read fail (offline/RPC) — server authoritative check karega.
+      }
+
       // Picker se saved delivery address + GPS coords order ke saath bhejo
       // taaki delivery partner exact spot par navigate kar sake
       const ship = savedAddress || {};
@@ -466,6 +509,21 @@ const Cart = () => {
                         </span>
                       )}
                     </div>
+                    {(() => {
+                      const row = stockMap.get(String(item.id));
+                      if (!row || row.stock == null) return null;
+                      const avail = Math.max(0, Math.floor(Number(row.stock) || 0));
+                      const short = row.in_stock === false || avail <= 0 || item.quantity > avail;
+                      return (
+                        <p className={`mt-1 text-[11px] font-bold ${short ? 'text-rose-600' : 'text-emerald-600'}`}>
+                          {short
+                            ? avail <= 0
+                              ? 'Out of Stock'
+                              : `Only ${avail} available`
+                            : `${avail} available`}
+                        </p>
+                      );
+                    })()}
                   </div>
 
                   {/* Quantity Stepper & Remove */}

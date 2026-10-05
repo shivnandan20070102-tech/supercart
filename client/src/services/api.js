@@ -1,6 +1,7 @@
 import { MOCK_PRODUCTS } from '../data/mockGroceryData';
 import { supabase } from '../config/supabase';
 import { findNearestStore } from './nearestStore';
+import { decrementStockDirect } from './stock';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com';
 
@@ -117,6 +118,25 @@ export const createOrderApi = async (orderData) => {
         status: 'Placed',
       }).select().single();
       if (!cloudError && cloudOrder) {
+        // Backend bypassed hai to stock decrement bhi yahin (atomic RPC preferred).
+        // Short ho to order wapas delete karo — oversell/phantom order nahi.
+        const itemsForStock = Array.isArray(orderData.orderItems) ? orderData.orderItems : [];
+        try {
+          const dec = await decrementStockDirect(supabase, itemsForStock);
+          if (!dec.ok && !dec.skipped) {
+            try {
+              await supabase.from('orders').delete().eq('id', cloudOrder.id);
+            } catch { /* best-effort rollback */ }
+            const hit = itemsForStock.find((it) => String(it?.productId ?? it?.product_id ?? it?.id) === String(dec.shortId));
+            throw new Error(
+              `Only ${dec.available ?? 0} left for "${hit?.name || `Product #${dec.shortId}`}" — please reduce quantity.`,
+            );
+          }
+        } catch (stockErr) {
+          if (/Only \d+ left for/.test(stockErr?.message || '')) throw stockErr;
+          // Decrement infra fail (table/RPC missing) — order bana rehne do,
+          // server retry/stock migration baad me sync karega. Order na toote.
+        }
         // Backend is bypassed here, so bump usage directly (best-effort)
         incrementCouponUsageApi(orderData.couponCode);
         return { success: true, data: cloudOrder, source: 'supabase_direct' };

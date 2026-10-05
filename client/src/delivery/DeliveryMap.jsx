@@ -58,7 +58,7 @@ const accuracyCircle = (lng, lat, radiusMeters, points = 64) => {
 // map Delhi ke bajaye Home Store par khulta hai (Dashboard se aata hai).
 // locationAllowed: SIRF assigned/home-store context me true (koi ACTIVE order ho
 // tab). False = idle/unrelated — live dot/accuracy/flyTo bilkul nahi, map sirf
-// Home Store fallback par rehta hai. Tracking hook untouched rehta hai.
+// Home Store fallback par rehta hai. Auto GPS prompt bhi sirf scope me hota hai.
 // assignedStoreIds/homeStoreId: scope debug ke liye (map bounds logic future me).
 const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => {
   const containerRef = useRef(null);
@@ -72,9 +72,10 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
   const [toast, setToast] = useState('');
 
   // Reusable hook: getCurrentPosition (high accuracy) + watchPosition live updates.
-  // Watch unmount par auto clear hota hai.
+  // Watch unmount par auto clear hota hai. Request budget watchdog andar hai —
+  // GPS stall ho to loading kabhi stuck nahi rehta (Retry-able error aata hai).
   // NOTE: requestLocation() locate button (handleLocate) se call hota hai —
-  // page load par EK BAAR auto bhi trigger hota hai (neeche auto-effect),
+  // scope milne par EK BAAR auto bhi trigger hota hai (neeche auto-effect),
   // isliye pehli baar browser ka Allow/Block popup turant aata hai.
   const {
     position,
@@ -190,7 +191,13 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
 
   // Error aaye to toast dikhao. Blocked-permission wala message lamba
   // (10s) taaki unblock steps padhe ja sakein; normal error 4s.
+  // SCOPE: idle (locationAllowed false) me location chahiye hi nahi — hook ke
+  // stale error toast yahan mat dikhao (noise + confusion).
   useEffect(() => {
+    if (!locationAllowed) {
+      setShowHelp(false);
+      return undefined;
+    }
     if (!locError) {
       setShowHelp(false);
       return undefined;
@@ -205,7 +212,7 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
       clearError();
     }, isBlocked ? 10000 : 4000);
     return () => window.clearTimeout(timer);
-  }, [locError, clearError, isBlocked, permissionState]);
+  }, [locError, clearError, isBlocked, permissionState, locationAllowed]);
 
   // Live position aate hi: green marker + accuracy circle + follow ho to flyTo.
   // SCOPE GUARD: locationAllowed false (idle / unrelated store) ho to live dot
@@ -331,16 +338,18 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
     requestLocation();
   };
 
-  // Page load (Login ke turant baad Dashboard) par PEHLI BAAR auto-recenter —
-  // bilkul aise jaise user ne khud locate button dabaya ho. Sirf ek baar;
-  // uske baad manual button waisa hi kaam karta hai jaisa pehle karta tha.
-  // Permission pehle se Blocked hai to wahi existing error message aayega.
+  // Page load par auto-recenter — SIRF scope me (koi ACTIVE order ho tab),
+  // bilkul aise jaise user ne khud locate button dabaya ho. Idle me browser
+  // permission prompt + spinner bekaar me nahi (dot waise bhi hidden rehta).
+  // Scope baad me mile (naya assignment aaye) to tab ek baar auto fire hota
+  // hai taaki marker bina tap ke aa jaye. Uske baad manual button same rehta
+  // hai. Permission pehle se Blocked hai to wahi existing error message aayega.
   useEffect(() => {
-    if (autoLocateDoneRef.current) return;
+    if (!locationAllowed || autoLocateDoneRef.current) return;
     autoLocateDoneRef.current = true;
     handleLocate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [locationAllowed]);
 
   // Token set nahi hai to dark fallback (app kabhi blank/crash nahi hogi)
   if (tokenMissing) {
@@ -410,6 +419,17 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
                 <RotateCcw className="h-4 w-4" /> Retry — request location again
               </button>
             </div>
+          )}
+          {/* Blocked nahi (timeout/stall/unavailable) to sirf Retry — taaki UI
+              kabhi stuck na lage; floating locate button bhi Retry hi hai. */}
+          {!isBlocked && (
+            <button
+              type="button"
+              onClick={() => { handleLocate(); }}
+              className="mx-auto mt-2 flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-500 text-xs font-black text-slate-950 shadow-xl transition hover:bg-emerald-400 active:scale-[0.99]"
+            >
+              <RotateCcw className="h-4 w-4" /> Retry — request location again
+            </button>
           )}
         </div>
       )}

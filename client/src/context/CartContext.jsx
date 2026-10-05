@@ -21,17 +21,29 @@ export const CartProvider = ({ children }) => {
     }
   }, [cartItems]);
 
+  const stockCapOf = (product) => {
+    const s = Number(product?.stock ?? product?.stock_quantity);
+    if (!Number.isFinite(s)) return null;
+    return Math.max(0, Math.floor(s));
+  };
+
   const addToCart = (product, quantity = 1) => {
+    // Out-of-stock product cart me jaye hi nahi; stock pata ho to cap me raho.
+    const cap = stockCapOf(product);
+    if (cap != null && cap <= 0) return;
+    const want = Math.max(1, Math.floor(Number(quantity) || 1));
     setCartItems((prevItems) => {
       const existingItem = prevItems.find((item) => item.id === product.id);
       if (existingItem) {
+        const capNow = stockCapOf({ ...existingItem, stock: product?.stock ?? existingItem?.stock });
+        const next = existingItem.quantity + want;
         return prevItems.map((item) =>
           item.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
+            ? { ...item, quantity: capNow != null ? Math.min(next, Math.max(1, capNow)) : next }
             : item
         );
       }
-      return [...prevItems, { ...product, quantity }];
+      return [...prevItems, { ...product, quantity: cap != null ? Math.min(want, Math.max(1, cap)) : want }];
     });
   };
 
@@ -45,9 +57,12 @@ export const CartProvider = ({ children }) => {
       return;
     }
     setCartItems((prevItems) =>
-      prevItems.map((item) =>
-        item.id === productId ? { ...item, quantity: newQuantity } : item
-      )
+      prevItems.map((item) => {
+        if (item.id !== productId) return item;
+        const cap = stockCapOf(item);
+        const next = Math.floor(Number(newQuantity) || 1);
+        return { ...item, quantity: cap != null ? Math.min(Math.max(1, next), Math.max(1, cap)) : Math.max(1, next) };
+      })
     );
   };
 

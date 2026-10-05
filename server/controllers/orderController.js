@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { getShippingCoords, resolveOrderStore } from '../utils/storeAssign.js';
+import { releaseStockReservation, reserveStockForOrder } from '../utils/stock.js';
 
 const isValidUUID = (val) => {
   if (!val || typeof val !== 'string') return false;
@@ -99,6 +100,8 @@ const bumpCouponUsage = async (code) => {
 // @route   POST /orders or POST /api/orders
 // @access  Private / Public (supports guest fallback)
 export const createOrder = async (req, res) => {
+  // Unexpected throw ke baad reserved stock wapas karne ke liye function-scope.
+  let reservation = null;
   try {
     const {
       orderItems,
@@ -206,6 +209,22 @@ export const createOrder = async (req, res) => {
       });
     }
 
+    // Real-time stock: order save se PEHLE atomic reserve (race-safe).
+    // Koi line short ho to order banta hi nahi — 409 me exact available batao.
+    // Non-DB products (seed 'p1' etc.) skip hote hain, order na toote.
+    reservation = await reserveStockForOrder(supabase, finalItems);
+    if (!reservation.ok) {
+      const short = reservation.insufficient?.[0];
+      return res.status(409).json({
+        success: false,
+        message: short
+          ? `Only ${short.available} left for "${short.name}" — please reduce quantity.`
+          : 'Some items in your cart are out of stock. Please refresh and try again.',
+        insufficient: reservation.insufficient || [],
+        code: 'INSUFFICIENT_STOCK',
+      });
+    }
+
     const payload = {
       user_id: ownerId,
       ...(finalStoreId != null ? { store_id: finalStoreId } : {}),
@@ -271,6 +290,8 @@ export const createOrder = async (req, res) => {
 
     if (error) {
       console.warn('⚠️ Supabase Order Insert Warning:', error.message);
+      // Order bani hi nahi — reserved stock wapas karo (oversell nahi, phantom cut nahi).
+      await releaseStockReservation(supabase, reservation.reserved);
       return res.status(500).json({
         success: false,
         message: 'Order could not be placed in database',
@@ -287,6 +308,10 @@ export const createOrder = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    // Order confirm hui hi nahi — reserved stock (agar kuch hua ho) wapas.
+    try {
+      if (reservation?.reserved?.length) await releaseStockReservation(supabase, reservation.reserved);
+    } catch { /* best-effort */ }
     res.status(500).json({
       success: false,
       message: 'Server error while creating order',

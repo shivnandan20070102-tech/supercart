@@ -3,6 +3,7 @@ import { Star, Plus, Minus, Check, Clock, Heart } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useStore } from '../../context/StoreContext';
+import { LOW_STOCK_AT, isOutOfStock, stockLabel, stockOf } from '../../services/stock';
 
 const ProductCard = ({ product }) => {
   const { cartItems, addToCart, updateQuantity } = useCart();
@@ -10,10 +11,15 @@ const ProductCard = ({ product }) => {
   const { isOnline, serviceable } = useStore();
 
   // Area serviceable nahi (10km me koi store nahi) to ordering band — sirf browsing
-  const canOrder = isOnline && serviceable !== false;
-
+  // Stock 0 / in_stock false ho to bhi purchase band ("Out of Stock").
   const cartItem = cartItems.find((item) => item.id === product.id);
   const quantity = cartItem ? cartItem.quantity : 0;
+  const outOfStock = isOutOfStock(product);
+  const storeOpen = isOnline && serviceable !== false;
+  const canOrder = storeOpen && !outOfStock;
+  const available = stockOf(product);
+  const atMax = available != null && quantity >= available;
+
   const wished = isInWishlist(product.id);
 
   const discountPercentage = product.originalPrice
@@ -27,15 +33,23 @@ const ProductCard = ({ product }) => {
       <div className="relative p-4 pb-0 bg-slate-50/50 flex items-center justify-center aspect-square overflow-hidden">
         {/* Discount / Custom Badge */}
         <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
-          {discountPercentage > 0 && (
-            <span className="bg-emerald-600 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-lg shadow-xs">
-              {discountPercentage}% OFF
+          {outOfStock ? (
+            <span className="bg-rose-600 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-lg shadow-xs">
+              Out of Stock
             </span>
-          )}
-          {product.badge && discountPercentage === 0 && (
-            <span className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg shadow-xs">
-              {product.badge}
-            </span>
+          ) : (
+            <>
+              {discountPercentage > 0 && (
+                <span className="bg-emerald-600 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-lg shadow-xs">
+                  {discountPercentage}% OFF
+                </span>
+              )}
+              {product.badge && discountPercentage === 0 && (
+                <span className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg shadow-xs">
+                  {product.badge}
+                </span>
+              )}
+            </>
           )}
         </div>
 
@@ -86,6 +100,16 @@ const ProductCard = ({ product }) => {
               ({product.reviewsCount || 40})
             </span>
           </div>
+          {/* Live available stock — har product par clearly visible */}
+          {available != null || outOfStock ? (
+            <p
+              className={`mt-1.5 text-[11px] font-bold ${
+                outOfStock ? 'text-rose-600' : available <= LOW_STOCK_AT ? 'text-amber-600' : 'text-emerald-600'
+              }`}
+            >
+              {stockLabel(product)}
+            </p>
+          ) : null}
         </div>
 
         {/* Price and Add/Quantity Actions */}
@@ -106,16 +130,17 @@ const ProductCard = ({ product }) => {
           {quantity === 0 ? (
             <button
               disabled={!canOrder}
+              title={outOfStock ? 'Out of Stock' : 'Add to cart'}
               onClick={() => addToCart(product)}
               className="flex items-center justify-center gap-1 rounded-xl border border-emerald-500/30 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition-all shadow-xs hover:border-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>ADD</span>
+              <span>{outOfStock ? 'OUT OF STOCK' : 'ADD'}</span>
             </button>
           ) : (
             <div className="flex items-center bg-emerald-600 text-white rounded-xl shadow-xs overflow-hidden">
               <button
-                disabled={!canOrder}
+                disabled={!storeOpen}
                 onClick={() => updateQuantity(product.id, quantity - 1)}
                 className="px-2.5 py-2 transition hover:bg-emerald-700 active:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                 title="Decrease quantity"
@@ -126,10 +151,10 @@ const ProductCard = ({ product }) => {
                 {quantity}
               </span>
               <button
-                disabled={!canOrder}
+                disabled={!storeOpen || outOfStock || atMax}
                 onClick={() => updateQuantity(product.id, quantity + 1)}
                 className="px-2.5 py-2 transition hover:bg-emerald-700 active:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Increase quantity"
+                title={atMax ? `Only ${available} available` : 'Increase quantity'}
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>

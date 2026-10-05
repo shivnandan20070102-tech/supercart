@@ -9,6 +9,7 @@ import ProductCard from '../components/grocery/ProductCard';
 import OfferCarousel from '../components/home/OfferCarousel';
 import LoadingState, { OfflineNotice } from '../components/layout/LoadingState';
 import { fetchProducts } from '../services/api';
+import { supabase } from '../config/supabase';
 import { useStore } from '../context/StoreContext';
 
 const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
@@ -67,7 +68,10 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
             rating: Number(item.rating || 4.5),
             reviewsCount: Number(item.reviews_count || item.reviewsCount || 40),
             badge: item.badge || '',
-            inStock: item.in_stock !== false,
+            // Real-time stock: available qty clearly dikhao (null = legacy/unknown).
+            stock: item.stock ?? item.stock_quantity ?? null,
+            in_stock: item.in_stock ?? null,
+            inStock: (item.in_stock ?? item.inStock ?? true) !== false && !(item.stock != null && Number(item.stock) <= 0),
             description: item.description,
             // Multi-store: product kis store ka hai (NULL = purana/global product, sab stores par)
             store_id: item.store_id ?? item.storeId ?? null,
@@ -88,6 +92,38 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, debouncedSearch]);
+
+  // Real-time stock: kisi aur user ke order se stock ghate to grid turant
+  // update ho (page reload nahi). Sirf stock/in_stock fields patch hote hain —
+  // filter/order/cart logic untouched.
+  useEffect(() => {
+    const channel = supabase
+      .channel('products-stock-live')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'products' }, (payload) => {
+        const next = payload.new;
+        if (!next || next.id == null) return;
+        // eslint-disable-next-line no-console
+        console.info('[stock] live update product', next.id, '->', next.stock);
+        setProducts((prev) =>
+          prev.map((p) =>
+            String(p.id) === String(next.id)
+              ? {
+                  ...p,
+                  stock: next.stock ?? p.stock,
+                  in_stock: next.in_stock ?? p.in_stock,
+                  inStock:
+                    (next.in_stock ?? p.in_stock ?? true) !== false &&
+                    !(next.stock != null && Number(next.stock) <= 0),
+                }
+              : p,
+          ),
+        );
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Client side fallback filter for instant responsiveness (raw query se turant filter)
   const filteredProducts = useMemo(() => {
