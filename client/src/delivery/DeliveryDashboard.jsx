@@ -647,6 +647,20 @@ const DeliveryDashboard = () => {
   // hi watch restart/stop hota hai, throttling/min-move same rehta hai.
   const locationAllowed = shouldShareLiveLocation({ homeStoreId, orders });
   const assignedStoreIds = getAssignedStoreIds(orders);
+  // DEBUG: scope transitions console me — dot na dikhe to sabse pehle ye
+  // dekho. allowed=false + activeCount=0 matlab rider idle hai (koi ACTIVE
+  // assigned order nahi) → dot BY DESIGN hidden, permission se matlab nahi.
+  // Dot chahiye to koi order assigned/accepted stage me hona chahiye.
+  useEffect(() => {
+    try {
+      const activeCount = (orders || []).filter((o) =>
+        ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(String(o.status || '').toLowerCase()),
+      ).length;
+      // eslint-disable-next-line no-console
+      console.info('[DeliveryDashboard] location scope: allowed =', locationAllowed, '| activeOrders =', activeCount, '| homeStoreId =', homeStoreId, '| assignedStores =', assignedStoreIds);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationAllowed, homeStoreId]);
   useEffect(() => {
     if (!user || !('geolocation' in navigator)) return undefined;
     if (!locationAllowed) return undefined;

@@ -23,11 +23,39 @@ const toLngLat = (center) => {
 
 const makeGreenDot = () => {
   const el = document.createElement('div');
-  el.className = 'relative h-6 w-6';
+  // Critical styles INLINE hain (Tailwind purge/z-index se independent) taaki
+  // dot kabhi invisible na ho — size, color, border, stacking yahin guaranteed.
+  // Ping animation ke liveryi keyframes neeche ensurePingKeyframes() se aate
+  // hain; Tailwind classes backup ke liye saath me rakhi hain (same look).
+  el.style.cssText = 'position:relative;width:24px;height:24px;pointer-events:none;z-index:10;';
+  el.setAttribute('data-delivery-dot', 'live');
   el.innerHTML =
-    '<span class="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-60"></span>' +
-    '<span class="absolute inset-1 rounded-full border-[3px] border-white bg-emerald-500 shadow-lg shadow-emerald-500/40"></span>';
+    '<span class="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-60" style="position:absolute;inset:0;border-radius:9999px;background:#34d399;opacity:0.6;animation:delivery-ping 1.6s cubic-bezier(0,0,0.2,1) infinite;"></span>' +
+    '<span class="absolute inset-1 rounded-full border-[3px] border-white bg-emerald-500 shadow-lg shadow-emerald-500/40" style="position:absolute;inset:4px;border-radius:9999px;background:#10b981;border:3px solid #ffffff;box-shadow:0 8px 20px rgba(16,185,129,0.45);"></span>';
   return el;
+};
+
+// Marker ping keyframes ek baar document me inject karo (Tailwind build me
+// animate-ping ho na ho, dot ka pulse yahin se guaranteed).
+const ensurePingKeyframes = () => {
+  try {
+    if (typeof document === 'undefined' || document.getElementById('delivery-dot-ping')) return;
+    const style = document.createElement('style');
+    style.id = 'delivery-dot-ping';
+    style.textContent = '@keyframes delivery-ping{0%{transform:scale(1);opacity:0.6}80%,100%{transform:scale(2);opacity:0}}';
+    document.head.appendChild(style);
+  } catch { /* ignore */ }
+};
+
+// Do coords ke beech Haversine distance (meters) — move-log spam guard ke liye.
+const distM = (a, b) => {
+  const R = 6371000;
+  const dLat = (((b.lat - a.lat) * Math.PI) / 180) / 2;
+  const dLng = (((b.lng - a.lng) * Math.PI) / 180) / 2;
+  const s1 = Math.sin(dLat);
+  const s2 = Math.sin(dLng);
+  const h = s1 * s1 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * s2 * s2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 };
 
 // accuracy (meters) ko map par circle polygon me badlo
@@ -60,7 +88,7 @@ const accuracyCircle = (lng, lat, radiusMeters, points = 64) => {
 // tab). False = idle/unrelated — live dot/accuracy/flyTo bilkul nahi, map sirf
 // Home Store fallback par rehta hai. Auto GPS prompt bhi sirf scope me hota hai.
 // assignedStoreIds/homeStoreId: scope debug ke liye (map bounds logic future me).
-const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => {
+const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedStoreIds = [], homeStoreId = null } = {}) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
@@ -68,6 +96,13 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
   // Page-load auto-recenter sirf EK baar ho — StrictMode double-effect se
   // bachne ke liye ref guard (re-render par reset nahi hota).
   const autoLocateDoneRef = useRef(false);
+  // Move-log spam guard: 25m se kam shift par console mat bharo.
+  const lastDotLogRef = useRef(null);
+  // Scope debug mirror (render-time ref access se bachne ke liye effect me sync).
+  const scopeInfoRef = useRef({ home: null, stores: [] });
+  useEffect(() => {
+    scopeInfoRef.current = { home: homeStoreId, stores: assignedStoreIds };
+  });
   const [tokenMissing] = useState(() => !MAPBOX_TOKEN);
   const [toast, setToast] = useState('');
 
@@ -217,22 +252,42 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
   // Live position aate hi: green marker + accuracy circle + follow ho to flyTo.
   // SCOPE GUARD: locationAllowed false (idle / unrelated store) ho to live dot
   // bilkul mat dikhao — map Home Store fallback par hi rahega.
-  // Yehi #4 hai — fix milte hi map TURANT us par center hota hai (sirf scope me).
+  // DEBUG: coords yahan tak pahunche ya nahi, console me [DeliveryMap] BLUE DOT
+  // lines se dikhega. Fix mila par dot na dikhe to ya scope off hai (neeche
+  // wali line) ya map init nahi hua.
   useEffect(() => {
-    if (!locationAllowed || !position || !mapRef.current) return;
+    if (!locationAllowed) {
+      // eslint-disable-next-line no-console
+      console.info('[DeliveryMap] fix suppressed by home-store scope (no active assigned order). homeStoreId=', scopeInfoRef.current.home, 'assignedStores=', scopeInfoRef.current.stores);
+      return;
+    }
+    if (!position || !mapRef.current) return;
     const map = mapRef.current;
     const { lng, lat, accuracy } = position;
-    if (typeof lng !== 'number' || typeof lat !== 'number') return;
+    if (typeof lng !== 'number' || typeof lat !== 'number') {
+      // eslint-disable-next-line no-console
+      console.warn('[DeliveryMap] invalid coords from hook (marker skipped):', lng, lat);
+      return;
+    }
 
-    // eslint-disable-next-line no-console
-    console.info('[DeliveryMap] centering on:', lat, lng);
-
+    ensurePingKeyframes();
     if (!markerRef.current) {
       markerRef.current = new mapboxgl.Marker({ element: makeGreenDot() })
         .setLngLat([lng, lat])
         .addTo(map);
+      // eslint-disable-next-line no-console
+      console.info('[DeliveryMap] BLUE DOT added at:', lat, lng, '±', accuracy, 'm');
+      lastDotLogRef.current = { lat, lng };
     } else {
       markerRef.current.setLngLat([lng, lat]);
+      // Har chhote GPS jitter par log spam na ho — 25m+ shift par hi batao.
+      const prev = lastDotLogRef.current;
+      const movedM = prev ? distM(prev, { lat, lng }) : Infinity;
+      if (movedM > 25) {
+        lastDotLogRef.current = { lat, lng };
+        // eslint-disable-next-line no-console
+        console.info('[DeliveryMap] BLUE DOT moved to:', lat, lng, '±', accuracy, 'm');
+      }
     }
 
     // Accuracy circle (agar GPS ne accuracy di ho)
@@ -273,6 +328,8 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true } = {}) => 
   // Home Store fallback par wapas lao (follow on ho tabhi).
   useEffect(() => {
     if (locationAllowed || !mapRef.current) return;
+    // eslint-disable-next-line no-console
+    console.info('[DeliveryMap] live dot removed — scope off (no active assigned order).');
     try {
       if (markerRef.current) {
         markerRef.current.remove();

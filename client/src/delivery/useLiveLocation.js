@@ -230,6 +230,8 @@ const useLiveLocation = () => {
       onFatalError(err);
     };
 
+    // eslint-disable-next-line no-console
+    console.info('[useLiveLocation] requesting GPS fix… perm=', permissionState);
     try {
       // NOTE: ye call locate button + page-load auto-recenter se hoti hai,
       // isliye pehli baar browser ka Allow/Block popup YAHIN trigger hota hai.
