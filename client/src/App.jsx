@@ -27,6 +27,7 @@ import DeliveryGuard from './delivery/DeliveryGuard';
 import DeliveryActivity from './delivery/DeliveryActivity';
 import DeliveryOrderDetail from './delivery/DeliveryOrderDetail';
 import DeliverySupportTickets from './delivery/DeliverySupportTickets';
+import DeliveryComplaints from './delivery/DeliveryComplaints';
 import StoreLogin from './store/StoreLogin';
 import StoreDashboard from './store/StoreDashboard';
 import StoreGuard from './store/StoreGuard';
@@ -119,6 +120,7 @@ function App() {
               <Route path="/delivery/order/:id" element={<DeliveryGuard><DeliveryOrderDetail /></DeliveryGuard>} />
               <Route path="/delivery/help" element={<DeliveryGuard><DeliveryHelp /></DeliveryGuard>} />
               <Route path="/delivery/support-tickets" element={<DeliveryGuard><DeliverySupportTickets /></DeliveryGuard>} />
+              <Route path="/delivery/complaints" element={<DeliveryGuard><DeliveryComplaints /></DeliveryGuard>} />
               <Route path="/delivery/dashboard" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
               <Route path="/delivery" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
               {/* Store Panel — sirf store_manager role (account Admin banata hai) */}

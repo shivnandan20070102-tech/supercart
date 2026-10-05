@@ -23,6 +23,7 @@ import { useAuth } from '../context/AuthContext';
 import { getMyOrdersApi } from '../services/api';
 import { useWishlist } from '../context/WishlistContext';
 import { useCart } from '../context/CartContext';
+import ComplaintForm from '../components/ComplaintForm';
 
 const inputClassName = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100';
 
@@ -57,7 +58,7 @@ const Profile = () => {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('supercart_dark_mode') === 'true');
   const [activeSection, setActiveSection] = useState(() => {
     const fromMenu = location.state?.section;
-    return ['personal', 'orders', 'payment', 'wishlist', 'appearance'].includes(fromMenu) ? fromMenu : 'personal';
+    return ['personal', 'orders', 'payment', 'wishlist', 'appearance', 'complaints'].includes(fromMenu) ? fromMenu : 'personal';
   });
   const sectionContentRef = useRef(null);
 
@@ -67,6 +68,7 @@ const Profile = () => {
     { id: 'payment', label: 'Payment settings', icon: CreditCard },
     { id: 'wishlist', label: 'Your wishlist', icon: Heart },
     { id: 'appearance', label: 'Appearance', icon: ShieldCheck },
+    { id: 'complaints', label: 'Raise a Complaint', icon: HelpCircle },
   ];
 
   useEffect(() => {
@@ -297,6 +299,10 @@ const Profile = () => {
                   <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${darkMode ? 'left-6' : 'left-1'}`} />
                 </button>
               </div>
+            </ProfileSection>}
+
+            {activeSection === 'complaints' && <ProfileSection icon={HelpCircle} title="Raise a Complaint" description="Issue batao (photo ke saath) — Admin jald jawab dega.">
+              <ComplaintForm complainantType="customer" userId={user?.id} userName={form.name || user?.name || user?.email || ''} />
             </ProfileSection>}
           </div>
 

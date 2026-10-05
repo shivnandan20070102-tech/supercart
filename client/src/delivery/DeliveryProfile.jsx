@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, ChevronDown, Crosshair, FileText, LoaderCircle, MapPin, Save, Settings, ShieldCheck, Upload, UserRound, BriefcaseBusiness, Route, Gift, Copy, Share2, CircleHelp, Headphones, TicketCheck, LogOut, Wallet } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, Crosshair, FileText, Flag, LoaderCircle, MapPin, Save, Settings, ShieldCheck, Upload, UserRound, BriefcaseBusiness, Route, Gift, Copy, Share2, CircleHelp, Headphones, TicketCheck, LogOut, Wallet } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { SignedDocImage, SignedDocLink } from '../components/SignedDoc';
@@ -447,6 +447,7 @@ const DeliveryProfile = () => {
       <div className="grid gap-3 sm:grid-cols-2">
         <Link to="/delivery/help" className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800 p-4 transition hover:border-emerald-500"><CircleHelp className="h-6 w-6 text-emerald-400" /><div><h3 className="font-black">Help Center</h3><p className="mt-1 text-xs text-slate-400">FAQs and quick answers</p></div></Link>
         <Link to="/delivery/support-tickets" className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800 p-4 transition hover:border-emerald-500"><TicketCheck className="h-6 w-6 text-emerald-400" /><div><h3 className="font-black">Support Tickets</h3><p className="mt-1 text-xs text-slate-400">Raise and track an issue</p></div></Link>
+        <Link to="/delivery/complaints" className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800 p-4 transition hover:border-emerald-500"><Flag className="h-6 w-6 text-emerald-400" /><div><h3 className="font-black">Raise a Complaint</h3><p className="mt-1 text-xs text-slate-400">Grievance with photo proof</p></div></Link>
       </div>
     </section>
     </AccordionSection>

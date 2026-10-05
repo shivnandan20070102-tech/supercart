@@ -24,6 +24,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { markOrderPackedApi } from '../services/api';
+import ComplaintForm from '../components/ComplaintForm';
 import { buildProductPayload, canManageProduct } from './storeProductAccess';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
 import InactivityGuard from '../components/InactivityGuard';
@@ -181,7 +182,7 @@ const StoreDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
-  const [tab, setTab] = useState('new'); // new | packed | all | products
+  const [tab, setTab] = useState('new'); // new | packed | all | products | support
   const [packingId, setPackingId] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   // Products section: apne store(s) ke products + per-row stock editing state.
@@ -638,7 +639,7 @@ const StoreDashboard = () => {
   };
 
   const visibleOrders = useMemo(() => {
-    if (tab === 'products') return [];
+    if (tab === 'products' || tab === 'support') return [];
     if (tab === 'new') return orders.filter((o) => NEED_PACK_STATUSES.has(statusLower(o.status)));
     if (tab === 'packed') return orders.filter((o) => PACKED_STATUSES.has(statusLower(o.status)));
     return orders;
@@ -790,6 +791,7 @@ const StoreDashboard = () => {
             { id: 'packed', label: 'Packed & Beyond' },
             { id: 'all', label: `All (${orders.length})` },
             { id: 'products', label: `Products (${storeProducts.length})` },
+            { id: 'support', label: 'Support' },
           ].map((t) => (
             <button
               key={t.id}
@@ -918,7 +920,14 @@ const StoreDashboard = () => {
           </div>
         )}
 
-        {tab === 'products' ? (
+        {tab === 'support' ? (
+          <div className="space-y-3">
+            <p className="text-xs font-bold text-slate-400">
+              Support — issue batao (photo ke saath), Admin jald jawab dega.
+            </p>
+            <ComplaintForm dark complainantType="store_manager" userId={manager?.id} userName={manager?.name || manager?.email || ''} />
+          </div>
+        ) : tab === 'products' ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-bold text-slate-400">
