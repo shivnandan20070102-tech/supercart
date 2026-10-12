@@ -5,28 +5,116 @@ import { decrementStockDirect } from './stock';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
-export const fetchProducts = async (category = '', search = '') => {
-  try {
-    const params = new URLSearchParams();
-    if (category && category !== 'all') params.append('category', category);
-    if (search) params.append('search', search);
+// ---- Render free-tier "cold start" hardening ----
+// Render ka free backend kuch der idle rehne par SO jata hai; agle request
+// par wake-up me 30-60s lagte hain. Isliye products fetch par:
+//  - kam se kam 60s ka AbortController timeout (pehle KOI timeout nahi tha —
+//    request athe hi atki rehti thi),
+//  - pehle 8s warm backend ko mauka, phir Supabase-direct parallel fallback
+//    (Supabase hamesha-on hai, to sote backend me bhi products 8-10s me),
+//  - dono fail + timeout ho to THROW (taaki Home page "Dubara try karein"
+//    button dikha sake), warna mock-catalog fallback (purana behaviour).
+export const PRODUCT_FETCH_TIMEOUT_MS = 60_000;
+export const BACKEND_WAKE_HINT_MS = 8_000;
+const SUPABASE_FALLBACK_TIMEOUT_MS = 20_000;
 
-    const url = `${API_BASE_URL}/products?${params.toString()}`;
-    const res = await fetch(url);
-    const json = await res.json();
-    return json.data || [];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = PRODUCT_FETCH_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
-    console.error('Failed to fetch products from API:', error);
-    const { data: supabaseProducts } = await supabase.from('products').select('*').order('id', { ascending: true });
-    if (supabaseProducts?.length) return supabaseProducts;
-    const normalizedCategory = category.toLowerCase();
-    const normalizedSearch = search.toLowerCase();
-    return MOCK_PRODUCTS.filter((product) => {
-      const matchesCategory = !normalizedCategory || product.category.toLowerCase().includes(normalizedCategory) || product.categoryName.toLowerCase().includes(normalizedCategory);
-      const matchesSearch = !normalizedSearch || product.name.toLowerCase().includes(normalizedSearch) || product.categoryName.toLowerCase().includes(normalizedSearch) || product.description.toLowerCase().includes(normalizedSearch);
-      return matchesCategory && matchesSearch;
-    });
+    // AbortError = hamara timeout (Render sleep case). Alag flag taaki UI
+    // "server so raha hai" vs "server down" me farak dikha sake.
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error(
+        `Backend timeout (${Math.round(timeoutMs / 1000)}s) — server sleep mode me ho sakta hai, thoda wait karke dubara try karein.`,
+      );
+      timeoutError.isTimeout = true;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
+};
+
+// Supabase query ko bhi time-bound rakho — atak/fail ho to null (caller aage badhe).
+// Ye helper kabhi throw NAHI karta, taaki fallback chain na toote.
+const querySupabaseProducts = async () => {
+  try {
+    const raced = await Promise.race([
+      supabase.from('products').select('*').order('id', { ascending: true }),
+      sleep(SUPABASE_FALLBACK_TIMEOUT_MS).then(() => ({ __timedOut: true })),
+    ]);
+    if (!raced || raced.__timedOut || raced.error) return null;
+    return raced.data ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const mockCatalogFallback = (category = '', search = '') => {
+  const normalizedCategory = String(category || '').toLowerCase();
+  const normalizedSearch = String(search || '').toLowerCase();
+  return MOCK_PRODUCTS.filter((product) => {
+    const matchesCategory = !normalizedCategory || product.category.toLowerCase().includes(normalizedCategory) || product.categoryName.toLowerCase().includes(normalizedCategory);
+    const matchesSearch = !normalizedSearch || product.name.toLowerCase().includes(normalizedSearch) || product.categoryName.toLowerCase().includes(normalizedSearch) || product.description.toLowerCase().includes(normalizedSearch);
+    return matchesCategory && matchesSearch;
+  });
+};
+
+export const fetchProducts = async (category = '', search = '', options = {}) => {
+  const timeoutMs = Number(options?.timeoutMs) > 0 ? Number(options.timeoutMs) : PRODUCT_FETCH_TIMEOUT_MS;
+  const graceMs = Number(options?.wakeGraceMs) > 0 ? Number(options.wakeGraceMs) : BACKEND_WAKE_HINT_MS;
+
+  const params = new URLSearchParams();
+  if (category && category !== 'all') params.append('category', category);
+  if (search) params.append('search', search);
+
+  const url = `${API_BASE_URL}/products?${params.toString()}`;
+
+  // Backend request TURANT shuru — ye Render ko wake-up signal bhi deta hai.
+  // (Internal try/catch hai, isliye ye promise kabhi reject nahi karta.)
+  const backendPromise = (async () => {
+    try {
+      const res = await fetchWithTimeout(url, {}, timeoutMs);
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
+      const json = await res.json();
+      return { ok: true, data: json.data || [] };
+    } catch (error) {
+      console.error('Failed to fetch products from API:', error);
+      return { ok: false, error };
+    }
+  })();
+
+  // Grace period: warm backend (1-2s normal case) ko pehle jawab dene do.
+  const quick = await Promise.race([backendPromise, sleep(graceMs).then(() => null)]);
+  if (quick) {
+    if (quick.ok) return quick.data;
+    // Backend TURANT fail (down/galati) — Supabase direct try karo.
+    const sb = await querySupabaseProducts();
+    if (sb?.length) return sb;
+    // Dono fail + timeout tha to throw (UI retry button dikhayega),
+    // warna purana mock-catalog behaviour.
+    if (quick.error?.isTimeout) throw quick.error;
+    return mockCatalogFallback(category, search);
+  }
+
+  // Backend grace se zyada le raha = Render sleep sambhav.
+  // Supabase (hamesha-on) se poochho; rows milen to TURANT wapas —
+  // backend request background me poori hokar Render ko warm kar degi,
+  // uske baad ki requests normal speed (1-2s) par aayengi.
+  const sb = await querySupabaseProducts();
+  if (sb?.length) return sb;
+
+  // Supabase khaali/fail — backend ke wake-up wale jawab ka wait karo.
+  const late = await backendPromise;
+  if (late.ok) return late.data;
+  if (late.error?.isTimeout) throw late.error;
+  return mockCatalogFallback(category, search);
 };
 
 export const loginApi = async (email, password) => {
@@ -454,6 +542,8 @@ const markOrderPackedDirect = async (orderId) => {
 
 export default {
   API_BASE_URL,
+  PRODUCT_FETCH_TIMEOUT_MS,
+  BACKEND_WAKE_HINT_MS,
   fetchProducts,
   loginApi,
   signupApi,

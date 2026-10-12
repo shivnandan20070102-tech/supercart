@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   MapPin,
   Navigation,
+  RefreshCw,
   ShoppingBag,
   TrendingUp,
 } from 'lucide-react';
 import ProductCard from '../components/grocery/ProductCard';
 import OfferCarousel from '../components/home/OfferCarousel';
 import LoadingState, { OfflineNotice } from '../components/layout/LoadingState';
-import { fetchProducts } from '../services/api';
+import { fetchProducts, PRODUCT_FETCH_TIMEOUT_MS, BACKEND_WAKE_HINT_MS } from '../services/api';
 import { supabase } from '../config/supabase';
 import { useStore } from '../context/StoreContext';
 
@@ -16,6 +17,12 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Render free-tier sleep: 8s+ lage to "server waking" message, 60s+ lage
+  // (ya fetch timeout throw kare) to manual retry button.
+  const [waking, setWaking] = useState(false);
+  const [fetchTimedOut, setFetchTimedOut] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  const requestIdRef = useRef(0);
   const [usedOfflineFallback, setUsedOfflineFallback] = useState(false);
   const {
     isOnline,
@@ -39,21 +46,41 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
     return () => window.clearTimeout(t);
   }, [searchQuery]);
 
-  // Fetch products from backend API when category/debounced-search changes
+  // Fetch products from backend API when category/debounced-search changes.
+  // Cold-start UX: BACKEND_WAKE_HINT_MS baad "server waking" message,
+  // PRODUCT_FETCH_TIMEOUT_MS baad retry button (stale-request guard ke saath).
   useEffect(() => {
     let isMounted = true;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const stillCurrent = () => isMounted && requestIdRef.current === requestId;
+
+    const wakeTimer = window.setTimeout(() => {
+      if (stillCurrent()) setWaking(true);
+    }, BACKEND_WAKE_HINT_MS);
+    const timeoutTimer = window.setTimeout(() => {
+      // Safety net: 60s tak jawab na aaye to loader ke andar hi retry
+      // button dikhao (loading true rehta hai taaki "No items" screen na aaye).
+      if (stillCurrent()) setFetchTimedOut(true);
+    }, PRODUCT_FETCH_TIMEOUT_MS);
+
     const loadProducts = async () => {
       // Pehle se products hain to full-screen loader mat dikhao (glitch kam hoga)
       if (products.length === 0) setLoading(true);
       else setLoading(true);
+      setWaking(false);
+      setFetchTimedOut(false);
       setError('');
       setUsedOfflineFallback(false);
-      const apiData = await fetchProducts(
-        selectedCategory === 'all' ? '' : selectedCategory,
-        debouncedSearch
-      );
+      try {
+        const apiData = await fetchProducts(
+          selectedCategory === 'all' ? '' : selectedCategory,
+          debouncedSearch,
+        );
 
-      if (isMounted) {
+        if (!stillCurrent()) return;
+        window.clearTimeout(wakeTimer);
+        window.clearTimeout(timeoutTimer);
         if (Array.isArray(apiData)) {
           // Normalize fields between Supabase snake_case and frontend camelCase
           const normalized = apiData.map((item) => ({
@@ -81,21 +108,42 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
             store_id: item.store_id ?? item.storeId ?? null,
           }));
           setProducts(normalized);
+          setFetchTimedOut(false);
           setUsedOfflineFallback(apiData.length > 0 && apiData.every((item) => String(item.id || '').startsWith('p')));
         } else {
           setProducts([]);
           setError('Products could not be loaded. Please make sure the backend server is running.');
         }
-        setLoading(false);
+      } catch (err) {
+        // Backend 60s timeout / Supabase dono fail — retry wala clear message.
+        if (!stillCurrent()) return;
+        window.clearTimeout(wakeTimer);
+        window.clearTimeout(timeoutTimer);
+        setProducts([]);
+        if (err?.isTimeout) {
+          setFetchTimedOut(true);
+          setError(
+            'Server start hone me zyada waqt le raha hai. Hamara free server idle rehne par so jata hai — pehli baar 30-60 second lag sakte hain. Thoda ruk kar dubara try karein.',
+          );
+        } else {
+          setError('Products could not be loaded. Please make sure the backend server is running.');
+        }
+      } finally {
+        if (stillCurrent()) {
+          setLoading(false);
+          setWaking(false);
+        }
       }
     };
 
     loadProducts();
     return () => {
       isMounted = false;
+      window.clearTimeout(wakeTimer);
+      window.clearTimeout(timeoutTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategory, debouncedSearch]);
+  }, [selectedCategory, debouncedSearch, retryKey]);
 
   // Real-time stock: kisi aur user ke order se stock ghate to grid turant
   // update ho (page reload nahi). Sirf stock fields patch hote hain —
@@ -255,11 +303,42 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
         <>
         {/* Empty Search / Filter State */}
         {loading && products.length === 0 ? (
-          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm"><LoadingState label="Loading fresh products..." /></div>
+          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <LoadingState
+              label={waking ? 'Server start ho raha hai, thoda wait karein...' : 'Loading fresh products...'}
+              subLabel={
+                waking
+                  ? 'Hamara free server idle rehne par so jata hai — pehli baar 30-60 second lag sakte hain. Uske baad sab normal speed par chalega.'
+                  : ''
+              }
+            />
+            {fetchTimedOut && (
+              <div className="flex justify-center pb-6">
+                <button
+                  type="button"
+                  onClick={() => setRetryKey((k) => k + 1)}
+                  className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-bold text-white transition hover:bg-emerald-700 active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Dubara try karein (Try Again)
+                </button>
+              </div>
+            )}
+          </div>
         ) : error ? (
           <div className="bg-red-50 rounded-3xl border border-red-200 p-8 text-center max-w-lg mx-auto my-8">
-            <h3 className="text-lg font-bold text-red-800">Unable to load products</h3>
+            <h3 className="text-lg font-bold text-red-800">
+              {fetchTimedOut ? 'Server ko start hone me time lag raha hai' : 'Unable to load products'}
+            </h3>
             <p className="text-sm text-red-700 mt-2">{error}</p>
+            <button
+              type="button"
+              onClick={() => setRetryKey((k) => k + 1)}
+              className="mt-4 inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-red-600 px-5 text-xs font-bold text-white transition hover:bg-red-700 active:scale-95"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Dubara try karein (Try Again)
+            </button>
           </div>
         ) : storeProducts.length === 0 ? (
           <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center max-w-md mx-auto my-8 shadow-xs">
