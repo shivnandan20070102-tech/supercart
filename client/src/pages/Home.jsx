@@ -5,6 +5,7 @@ import {
   RefreshCw,
   ShoppingBag,
   TrendingUp,
+  X,
 } from 'lucide-react';
 import ProductCard from '../components/grocery/ProductCard';
 import OfferCarousel from '../components/home/OfferCarousel';
@@ -12,6 +13,7 @@ import LoadingState, { OfflineNotice } from '../components/layout/LoadingState';
 import { fetchProducts, PRODUCT_FETCH_TIMEOUT_MS, BACKEND_WAKE_HINT_MS } from '../services/api';
 import { supabase } from '../config/supabase';
 import { useStore } from '../context/StoreContext';
+import { useAuth } from '../context/AuthContext';
 
 const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
   const [products, setProducts] = useState([]);
@@ -38,6 +40,14 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
   } = useStore();
   const outOfService = hasLocation && locationChecked && !nearestLoading && serviceable === false;
   const servingStore = hasLocation && serviceable === true ? nearestStore : null;
+  // Google OAuth ke baad AuthContext yahan one-shot notice deta hai
+  // ("Welcome Back!" / naye account ka welcome / account-link conflict).
+  const { authNotice, clearAuthNotice } = useAuth();
+  useEffect(() => {
+    if (!authNotice) return undefined;
+    const t = window.setTimeout(() => clearAuthNotice(), 8000);
+    return () => window.clearTimeout(t);
+  }, [authNotice, clearAuthNotice]);
 
   // Search ko debounce karo — har keystroke par API hit se glitch hota tha
   const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
@@ -215,6 +225,25 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
         <div className="mx-auto mt-4 max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-bold text-amber-900" role="status">
             Store is currently closed, please check back later
+          </div>
+        </div>
+      )}
+      {/* Google login/signup ke baad one-shot notice (Welcome Back! / conflict) */}
+      {authNotice && (
+        <div className="mx-auto mt-4 max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div
+            className={`flex items-center justify-center gap-3 rounded-2xl border px-4 py-3 text-center text-sm font-bold ${authNotice.type === 'error' ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}
+            role="status"
+          >
+            <span>{authNotice.message}</span>
+            <button
+              type="button"
+              onClick={clearAuthNotice}
+              aria-label="Dismiss notification"
+              className="rounded-full p-1 transition hover:bg-black/5"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}

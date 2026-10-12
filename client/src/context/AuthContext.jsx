@@ -1,7 +1,26 @@
-import React, { createContext, useCallback, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useRef, useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
 
 const AuthContext = createContext();
+
+const AUTH_NOTICE_KEY = 'supercart_auth_notice';
+const AUTH_NOTICE_MAX_AGE_MS = 5 * 60 * 1000;
+
+const readStoredNotice = () => {
+  try {
+    const raw = sessionStorage.getItem(AUTH_NOTICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.message) return null;
+    if (parsed.at && Date.now() - Number(parsed.at) > AUTH_NOTICE_MAX_AGE_MS) {
+      try { sessionStorage.removeItem(AUTH_NOTICE_KEY); } catch { /* ignore */ }
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
@@ -14,22 +33,158 @@ export const AuthProvider = ({ children }) => {
   });
 
   const [loading, setLoading] = useState(true);
+  const [authNotice, setAuthNotice] = useState(readStoredNotice);
+  const inflightProfileRef = useRef(new Set());
 
-  const persistOAuthSession = (session) => {
-    const googleUser = {
-      id: session.user.id,
-      name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Google User',
-      email: session.user.email,
-      phone: session.user.user_metadata?.phone || '',
-      location: session.user.user_metadata?.location || '',
-      avatar: session.user.user_metadata?.avatar_url || '',
-      provider: 'google',
-      token: session.access_token,
-    };
-    setUser(googleUser);
-    localStorage.setItem('supercart_user', JSON.stringify(googleUser));
-    localStorage.setItem('supercart_token', session.access_token);
-  };
+  const clearAuthNotice = useCallback(() => {
+    setAuthNotice(null);
+    try { sessionStorage.removeItem(AUTH_NOTICE_KEY); } catch { /* ignore */ }
+  }, []);
+
+  const showAuthNotice = useCallback((notice) => {
+    if (!notice?.message) return;
+    const stamped = { ...notice, at: Date.now() };
+    setAuthNotice(stamped);
+    try { sessionStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify(stamped)); } catch { /* ignore */ }
+  }, []);
+
+  // Idempotent OAuth profile ensure (Google signup/login fix).
+  // - Existing profile (same Auth id) milti hai to use AS-IS karo — role,
+  //   address/location, phone, orders/cart data kabhi overwrite/delete nahi.
+  // - Koi row nahi aur email kisi aur Auth id se judi hai to auto-merge/link
+  //   MAT karo — sirf linkConflict signal do taaki caller clear message dikhaye.
+  // - Sirf jab bilkul nayi id + unused email ho tab minimal row INSERT karo.
+  // - Secrets/tokens kabhi log mat karo — sirf error.message.
+  const ensureOAuthProfile = useCallback(async (authUser) => {
+    const fallbackName =
+      authUser.user_metadata?.full_name ||
+      authUser.user_metadata?.name ||
+      authUser.email?.split('@')[0] ||
+      'Google User';
+    try {
+      const { data: existing, error: readError } = await supabase
+        .from('users')
+        .select('id,name,email,phone,location,role')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      if (readError) console.error('OAuth profile read failed:', readError.message);
+      if (existing) return { profile: existing, isNew: false };
+
+      if (authUser.email) {
+        const { data: byEmail, error: emailError } = await supabase
+          .from('users')
+          .select('id,email')
+          .eq('email', authUser.email)
+          .maybeSingle();
+        if (emailError) console.error('OAuth email check failed:', emailError.message);
+        if (byEmail && byEmail.id !== authUser.id) {
+          return { profile: null, isNew: false, linkConflict: true };
+        }
+      }
+
+      const { error: insertError } = await supabase.from('users').insert({
+        id: authUser.id,
+        name: fallbackName,
+        email: authUser.email,
+        phone: authUser.user_metadata?.phone || '',
+        role: 'customer',
+      });
+      if (insertError) {
+        // Race (parallel SIGNED_IN + INITIAL_SESSION) ya email-unique race:
+        // dobara read karo — existing ko overwrite kabhi mat karo.
+        const { data: raced } = await supabase
+          .from('users')
+          .select('id,name,email,phone,location,role')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        if (raced) return { profile: raced, isNew: false };
+        console.error('OAuth profile create failed:', insertError.message);
+        return { profile: null, isNew: true, insertFailed: true };
+      }
+      const { data: created } = await supabase
+        .from('users')
+        .select('id,name,email,phone,location,role')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      return { profile: created, isNew: true };
+    } catch (err) {
+      console.error('OAuth profile ensure failed:', err?.message || 'unknown error');
+      return { profile: null, isNew: false, transient: true };
+    }
+  }, []);
+
+  const persistOAuthSession = useCallback(async (session, { announce = false } = {}) => {
+    const authUser = session?.user;
+    if (!authUser) return;
+    // Concurrent duplicate session events (getSession + INITIAL_SESSION +
+    // SIGNED_IN) par double-INSERT race rokho — pehli call jeetegi.
+    if (inflightProfileRef.current.has(authUser.id)) return;
+    inflightProfileRef.current.add(authUser.id);
+    try {
+      const fallbackName =
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        authUser.email?.split('@')[0] ||
+        'Google User';
+      const avatar =
+        authUser.user_metadata?.avatar_url || authUser.user_metadata?.picture || '';
+
+      const ensured = await ensureOAuthProfile(authUser);
+
+      if (ensured.linkConflict) {
+        const conflictUser = {
+          id: authUser.id,
+          name: fallbackName,
+          email: authUser.email,
+          phone: '',
+          location: '',
+          avatar,
+          provider: 'google',
+          token: session.access_token,
+          linkConflict: true,
+        };
+        setUser(conflictUser);
+        localStorage.setItem('supercart_user', JSON.stringify(conflictUser));
+        localStorage.setItem('supercart_token', session.access_token);
+        if (announce) {
+          showAuthNotice({
+            type: 'error',
+            message:
+              'This email is already registered with email/password. Please log in with your password instead — accounts were not merged.',
+          });
+        }
+        return;
+      }
+
+      const profile = ensured.profile;
+      const googleUser = {
+        id: authUser.id,
+        // DB profile values win (preserve role/phone/location); metadata sirf fallback.
+        name: profile?.name || fallbackName,
+        email: profile?.email || authUser.email,
+        phone: profile?.phone || '',
+        location: profile?.location || '',
+        avatar,
+        provider: 'google',
+        role: profile?.role || 'customer',
+        token: session.access_token,
+      };
+      setUser(googleUser);
+      localStorage.setItem('supercart_user', JSON.stringify(googleUser));
+      localStorage.setItem('supercart_token', session.access_token);
+      if (announce) {
+        if (ensured.insertFailed || ensured.transient) {
+          showAuthNotice({ type: 'success', message: `Welcome, ${googleUser.name}! You are logged in with Google.` });
+        } else if (ensured.isNew) {
+          showAuthNotice({ type: 'success', message: `Welcome, ${googleUser.name}! Your Google account was created.` });
+        } else {
+          showAuthNotice({ type: 'success', message: 'Welcome Back!' });
+        }
+      }
+    } finally {
+      inflightProfileRef.current.delete(authUser.id);
+    }
+  }, [ensureOAuthProfile, showAuthNotice]);
 
   useEffect(() => {
     let mounted = true;
@@ -40,10 +195,11 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (mounted && session?.user) {
-          persistOAuthSession(session);
+          // Initial load / reload: silently restore (no "Welcome Back!" banner).
+          await persistOAuthSession(session, { announce: false });
         }
       } catch (err) {
-        console.error('Error fetching Supabase session:', err);
+        console.error('Error fetching Supabase session:', err?.message || err);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -53,17 +209,19 @@ export const AuthProvider = ({ children }) => {
 
     // 2. Listen to auth state changes (e.g. Google OAuth redirect callback)
     // INITIAL_SESSION: reload par existing session; SIGNED_IN: fresh OAuth;
-    // TOKEN_REFRESHED: silent refresh — teeno me user persist karo.
+    // TOKEN_REFRESHED: silent refresh.
+    // Sirf fresh SIGNED_IN par "Welcome Back!" announce karo — reload/refresh silent.
     // Sirf SIGNED_IN sun-ne se reload/PKCE-timing cases me user null reh jata tha.
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (!mounted) return;
         if (session?.user && event !== 'PASSWORD_RECOVERY' && event !== 'SIGNED_OUT') {
-          persistOAuthSession(session);
+          persistOAuthSession(session, { announce: event === 'SIGNED_IN' });
         } else if (event === 'SIGNED_OUT') {
           setUser(null);
           localStorage.removeItem('supercart_user');
           localStorage.removeItem('supercart_token');
+          clearAuthNotice();
         }
         setLoading(false);
       }
@@ -73,7 +231,7 @@ export const AuthProvider = ({ children }) => {
       mounted = false;
       authListener?.subscription?.unsubscribe();
     };
-  }, []);
+  }, [persistOAuthSession, clearAuthNotice]);
 
   useEffect(() => {
     if (!user?.id) return undefined;
@@ -195,11 +353,12 @@ export const AuthProvider = ({ children }) => {
     try {
       await supabase.auth.signOut();
     } catch (e) {
-      console.error(e);
+      console.error(e?.message || e);
     }
     setUser(null);
     localStorage.removeItem('supercart_user');
     localStorage.removeItem('supercart_token');
+    clearAuthNotice();
   };
 
   // Pin/AddressPicker se save hote hi Profile ke "Location / delivery address"
@@ -273,7 +432,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, updateProfile, updateLocation, logout, signInWithEmail, signUpWithEmail, signInWithGoogle }}>
+    <AuthContext.Provider value={{ user, loading, authNotice, clearAuthNotice, login, updateProfile, updateLocation, logout, signInWithEmail, signUpWithEmail, signInWithGoogle }}>
       {children}
     </AuthContext.Provider>
   );
