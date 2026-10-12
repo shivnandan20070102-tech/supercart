@@ -8,6 +8,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 		autoRefreshToken: true,
 		persistSession: true,
 		detectSessionInUrl: true,
+		// Supabase Auth server PKCE `?code=` bhejta hai (naye projects ka default).
+		// Default `implicit` rehne par verifier store hi nahi hota aur code
+		// exchange kabhi hota nahi — redirect ke baad session null rehta hai.
+		flowType: 'pkce',
 	},
 });
 

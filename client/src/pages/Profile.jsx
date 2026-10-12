@@ -43,7 +43,7 @@ const ProfileSection = ({ icon: Icon, title, description, children }) => (
 );
 
 const Profile = () => {
-  const { user, updateProfile, logout } = useAuth();
+  const { user, loading, updateProfile, logout } = useAuth();
   const { wishlistItems, toggleWishlist } = useWishlist();
   const { addToCart } = useCart();
   const navigate = useNavigate();
@@ -91,6 +91,9 @@ const Profile = () => {
   }, [location.state]);
 
   useEffect(() => {
+    // OAuth redirect ke baad session resolve hone me ~ms lagte hain —
+    // loading ke dauraan /login mat bhejo, warna valid user bhi bounce ho jayega.
+    if (loading) return;
     if (!user) {
       navigate('/login');
       return;
@@ -114,7 +117,15 @@ const Profile = () => {
       }
     };
     loadOrders();
-  }, [navigate, user]);
+  }, [navigate, user, loading]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex items-center gap-2 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Checking login...</div>
+      </div>
+    );
+  }
 
   if (!user) return null;
 

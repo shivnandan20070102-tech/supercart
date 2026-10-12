@@ -15,61 +15,62 @@ export const AuthProvider = ({ children }) => {
 
   const [loading, setLoading] = useState(true);
 
+  const persistOAuthSession = (session) => {
+    const googleUser = {
+      id: session.user.id,
+      name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Google User',
+      email: session.user.email,
+      phone: session.user.user_metadata?.phone || '',
+      location: session.user.user_metadata?.location || '',
+      avatar: session.user.user_metadata?.avatar_url || '',
+      provider: 'google',
+      token: session.access_token,
+    };
+    setUser(googleUser);
+    localStorage.setItem('supercart_user', JSON.stringify(googleUser));
+    localStorage.setItem('supercart_token', session.access_token);
+  };
+
   useEffect(() => {
+    let mounted = true;
     // 1. Check active session on initial load
+    // getSession() initializePromise (PKCE code exchange) ka wait karta hai,
+    // isliye redirect ke turant baad bhi sahi session milta hai.
     const checkSession = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const googleUser = {
-            id: session.user.id,
-            name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Google User',
-            email: session.user.email,
-            phone: session.user.user_metadata?.phone || '',
-            location: session.user.user_metadata?.location || '',
-            avatar: session.user.user_metadata?.avatar_url || '',
-            provider: 'google',
-            token: session.access_token,
-          };
-          setUser(googleUser);
-          localStorage.setItem('supercart_user', JSON.stringify(googleUser));
-          localStorage.setItem('supercart_token', session.access_token);
+        if (mounted && session?.user) {
+          persistOAuthSession(session);
         }
       } catch (err) {
         console.error('Error fetching Supabase session:', err);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
     checkSession();
 
     // 2. Listen to auth state changes (e.g. Google OAuth redirect callback)
+    // INITIAL_SESSION: reload par existing session; SIGNED_IN: fresh OAuth;
+    // TOKEN_REFRESHED: silent refresh — teeno me user persist karo.
+    // Sirf SIGNED_IN sun-ne se reload/PKCE-timing cases me user null reh jata tha.
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          const googleUser = {
-            id: session.user.id,
-            name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Google User',
-            email: session.user.email,
-            phone: session.user.user_metadata?.phone || '',
-            location: session.user.user_metadata?.location || '',
-            avatar: session.user.user_metadata?.avatar_url || '',
-            provider: 'google',
-            token: session.access_token,
-          };
-          setUser(googleUser);
-          localStorage.setItem('supercart_user', JSON.stringify(googleUser));
-          localStorage.setItem('supercart_token', session.access_token);
+      (event, session) => {
+        if (!mounted) return;
+        if (session?.user && event !== 'PASSWORD_RECOVERY' && event !== 'SIGNED_OUT') {
+          persistOAuthSession(session);
         } else if (event === 'SIGNED_OUT') {
           setUser(null);
           localStorage.removeItem('supercart_user');
           localStorage.removeItem('supercart_token');
         }
+        setLoading(false);
       }
     );
 
     return () => {
+      mounted = false;
       authListener?.subscription?.unsubscribe();
     };
   }, []);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShoppingBag,
@@ -35,7 +35,13 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const navigate = useNavigate();
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { user, loading: authLoading, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+
+  // OAuth ke baad `/` par session ban chuka ho aur user phir /login khole
+  // (ya Site URL /login ho) to form mat dikhao — seedha home bhejo.
+  useEffect(() => {
+    if (!authLoading && user) navigate('/', { replace: true });
+  }, [authLoading, user, navigate]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
