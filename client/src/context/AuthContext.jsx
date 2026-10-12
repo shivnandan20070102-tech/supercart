@@ -48,6 +48,49 @@ export const AuthProvider = ({ children }) => {
     try { sessionStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify(stamped)); } catch { /* ignore */ }
   }, []);
 
+  // OAuth return URL se `error` params hatana (stale error dobara na dikhe).
+  // `code` param ko haath mat lagao — uska exchange supabase-js karta hai.
+  const clearOAuthReturnParams = useCallback(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has('error') && !params.has('error_description')) return;
+      params.delete('error');
+      params.delete('error_description');
+      const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
+      window.history.replaceState(null, '', next);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Google redirect ke baad session na bane to asal wajah Home banner par
+  // dikhao (Supabase `?error=` bhejta hai; `?code=` + no session = exchange fail).
+  // Sirf error.message jaisi safe strings — tokens/secrets kabhi nahi.
+  const surfaceOAuthReturnError = useCallback(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const err = params.get('error');
+      const desc = params.get('error_description');
+      const code = params.get('code');
+      if (!err && !code) return;
+      if (err) {
+        const reason = (desc || err).trim().slice(0, 300);
+        showAuthNotice({
+          type: 'error',
+          message: `Google login complete nahi hua: ${reason}. Dobara try karo.`,
+        });
+      } else {
+        showAuthNotice({
+          type: 'error',
+          message:
+            'Google login complete nahi ho paya (session nahi bana). Dobara try karo; phir bhi fail ho to Supabase dashboard mein Google provider aur Redirect URLs check karo.',
+        });
+      }
+      params.delete('error');
+      params.delete('error_description');
+      const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
+      window.history.replaceState(null, '', next);
+    } catch { /* ignore */ }
+  }, [showAuthNotice]);
+
   // Idempotent OAuth profile ensure (Google signup/login fix).
   // - Existing profile (same Auth id) milti hai to use AS-IS karo — role,
   //   address/location, phone, orders/cart data kabhi overwrite/delete nahi.
@@ -197,6 +240,12 @@ export const AuthProvider = ({ children }) => {
         if (mounted && session?.user) {
           // Initial load / reload: silently restore (no "Welcome Back!" banner).
           await persistOAuthSession(session, { announce: false });
+          clearOAuthReturnParams();
+        } else if (mounted) {
+          // Google redirect ke baad session nahi bana to chup mat raho —
+          // warna user ko "account create hi nahi hua" lagta hai jabki asal
+          // wajah URL mein `?error=` / fail hua `?code=` exchange hota hai.
+          surfaceOAuthReturnError();
         }
       } catch (err) {
         console.error('Error fetching Supabase session:', err?.message || err);
@@ -231,7 +280,7 @@ export const AuthProvider = ({ children }) => {
       mounted = false;
       authListener?.subscription?.unsubscribe();
     };
-  }, [persistOAuthSession, clearAuthNotice]);
+  }, [persistOAuthSession, clearAuthNotice, clearOAuthReturnParams, surfaceOAuthReturnError]);
 
   useEffect(() => {
     if (!user?.id) return undefined;
