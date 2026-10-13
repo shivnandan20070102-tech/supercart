@@ -64,18 +64,30 @@ export const AuthProvider = ({ children }) => {
   // Google redirect ke baad session na bane to asal wajah Home banner par
   // dikhao (Supabase `?error=` bhejta hai; `?code=` + no session = exchange fail).
   // Sirf error.message jaisi safe strings — tokens/secrets kabhi nahi.
-  const surfaceOAuthReturnError = useCallback(() => {
+  // `exchangeError` = getSession() ka PKCE exchange error (jaise live par
+  // "Unable to exchange external code" jab Redirect URL / Google Console
+  // whitelist missing hoti hai). Fail hone par stale `code` bhi URL se hatate
+  // hain taaki reload par same code dobara exchange na ho (repeat error loop).
+  const surfaceOAuthReturnError = useCallback((exchangeError = '') => {
     try {
       const params = new URLSearchParams(window.location.search);
       const err = params.get('error');
       const desc = params.get('error_description');
       const code = params.get('code');
-      if (!err && !code) return;
+      if (!err && !code && !exchangeError) return;
       if (err) {
         const reason = (desc || err).trim().slice(0, 300);
         showAuthNotice({
           type: 'error',
           message: `Google login complete nahi hua: ${reason}. Dobara try karo.`,
+        });
+      } else if (exchangeError) {
+        const reason = String(exchangeError).trim().slice(0, 300);
+        showAuthNotice({
+          type: 'error',
+          message:
+            `Google login complete nahi hua: ${reason}. ` +
+            'Supabase Dashboard me Redirect URLs aur Google Console me callback URL check karo (neeche steps).',
         });
       } else {
         showAuthNotice({
@@ -86,6 +98,7 @@ export const AuthProvider = ({ children }) => {
       }
       params.delete('error');
       params.delete('error_description');
+      params.delete('code');
       const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
       window.history.replaceState(null, '', next);
     } catch { /* ignore */ }
@@ -236,7 +249,10 @@ export const AuthProvider = ({ children }) => {
     // isliye redirect ke turant baad bhi sahi session milta hai.
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // getSession() PKCE `?code=` exchange karta hai. Live par fail ho
+        // ("Unable to exchange external code") to error yahin milta hai —
+        // ise banner me dikhao taaki user ko pata chale, silent fail nahi.
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (mounted && session?.user) {
           // Initial load / reload: silently restore (no "Welcome Back!" banner).
           await persistOAuthSession(session, { announce: false });
@@ -245,7 +261,7 @@ export const AuthProvider = ({ children }) => {
           // Google redirect ke baad session nahi bana to chup mat raho —
           // warna user ko "account create hi nahi hua" lagta hai jabki asal
           // wajah URL mein `?error=` / fail hua `?code=` exchange hota hai.
-          surfaceOAuthReturnError();
+          surfaceOAuthReturnError(sessionError?.message || '');
         }
       } catch (err) {
         console.error('Error fetching Supabase session:', err?.message || err);
@@ -451,6 +467,9 @@ export const AuthProvider = ({ children }) => {
       // Localhost setup: Supabase exchanges code at its own callback, then
       // redirects back here. redirectTo MUST be whitelisted in Supabase Dashboard
       // -> Authentication -> URL Configuration -> Redirect URLs.
+      // LIVE (https://supercart-iota.vercel.app): wahan ye 2 URLs add honi chahiye —
+      //   Site URL:      https://supercart-iota.vercel.app
+      //   Redirect URLs: https://supercart-iota.vercel.app/**  (plus localhost dev ke liye)
       // Google Console must whitelist Supabase callback (NOT localhost):
       // https://eagwchutdhtgioujetag.supabase.co/auth/v1/callback
       //
