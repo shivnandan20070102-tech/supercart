@@ -446,21 +446,34 @@ export const AuthProvider = ({ children }) => {
     return { success: true };
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (_mode = 'login') => {
     try {
       // Localhost setup: Supabase exchanges code at its own callback, then
       // redirects back here. redirectTo MUST be whitelisted in Supabase Dashboard
       // -> Authentication -> URL Configuration -> Redirect URLs.
       // Google Console must whitelist Supabase callback (NOT localhost):
       // https://eagwchutdhtgioujetag.supabase.co/auth/v1/callback
+      //
+      // UX FIX (user demand): "ID/password na mange, sirf email choose karke
+      // login/signup ho jaye" —
+      // - pehle `prompt: 'consent'` + `access_type: 'offline'` tha jo har baar
+      //   consent/password screen force karta tha.
+      // - ab `prompt: 'select_account'` hai: browser me jo Google accounts
+      //   logged-in hain unki list khulti hai, 1 click me account select +
+      //   wapas app me login/signup. Dobara password nahi mangta.
+      // - NOTE: agar browser me koi Google session hi nahi hai (pehli baar /
+      //   logout hai) to Google security ke liye 1 baar ID/password mangega —
+      //   ise bypass karna possible nahi hai.
+      // - login vs signup me OAuth flow same hota hai: naya email hoga to
+      //   `ensureOAuthProfile` nayi row INSERT karke account bana deta hai,
+      //   purana email hoga to seedha login. Isliye `mode` sirf tracking ke liye.
       const redirectTo = `${window.location.origin}/`;
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo,
           queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
+            prompt: 'select_account',
           },
         },
       });

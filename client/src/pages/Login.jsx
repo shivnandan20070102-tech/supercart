@@ -96,7 +96,9 @@ const Login = () => {
     setErrorMsg('');
     setMessage('');
     try {
-      const result = await signInWithGoogle();
+      // Login tab ho ya Signup tab — dono me email-chooser wala OAuth chalega.
+      // Naya email hoga to account auto-create (signup), purana hoga to login.
+      const result = await signInWithGoogle(isLogin ? 'login' : 'signup');
       if (result.success) {
         // If real Google OAuth redirect happens, page will reload automatically
       } else {
@@ -149,12 +151,14 @@ const Login = () => {
           </button>
         </div>
 
-        {/* ─── GOOGLE LOGIN BUTTON ─────────────────── */}
+        {/* ─── GOOGLE LOGIN / SIGNUP BUTTON ───────────────────
+            Login tab: purana user email choose karke login.
+            Signup tab: naya user email choose karke 1-click me account create. */}
         <button
           type="button"
           onClick={handleGoogleLogin}
           disabled={googleLoading}
-          className="w-full flex items-center justify-center gap-3 py-3 px-4 border-2 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 rounded-2xl text-sm font-bold text-slate-700 transition-all duration-200 cursor-pointer disabled:opacity-70 group mb-5"
+          className="w-full flex items-center justify-center gap-3 py-3 px-4 border-2 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 rounded-2xl text-sm font-bold text-slate-700 transition-all duration-200 cursor-pointer disabled:opacity-70 group mb-2"
         >
           {googleLoading ? (
             <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
@@ -162,9 +166,16 @@ const Login = () => {
             <GoogleIcon />
           )}
           <span className="group-hover:text-emerald-700 transition">
-            {googleLoading ? 'Connecting to Google...' : 'Continue with Google'}
+            {googleLoading
+              ? (isLogin ? 'Choose your email...' : 'Creating account...')
+              : (isLogin ? 'Continue with Google' : 'Sign up with Google')}
           </span>
         </button>
+        <p className="text-[11px] text-slate-400 text-center mb-5">
+          {isLogin
+            ? 'Apna Google email choose karo — password dobara nahi mangega'
+            : 'Apna Google email choose karo — naya account auto-create ho jayega'}
+        </p>
 
         {/* Divider */}
         <div className="flex items-center gap-3 mb-5">
