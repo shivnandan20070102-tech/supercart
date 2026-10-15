@@ -20,6 +20,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { isOrderInScope } from './storeScope';
+import { triggerDeliveredInvoiceEmail } from '../services/invoice';
 
 // Checkout wale delivery-instruction values ka label + icon map
 const INSTRUCTION_META = {
@@ -156,7 +157,11 @@ const DeliveryOrderDetail = () => {
       .eq('id', order.id)
       .eq('delivery_boy_id', user.id);
     if (updateError) setError(updateError.message);
-    else await loadOrder(user.id);
+    else {
+      await loadOrder(user.id);
+      // Delivered hote hi customer ko invoice PDF email (backend, fire-and-forget).
+      if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(order.id);
+    }
     setUpdating(false);
   };
 

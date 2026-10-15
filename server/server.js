@@ -22,6 +22,7 @@ import { getProducts, getProductById } from './controllers/productController.js'
 import { forgotPassword, loginUser, signupUser } from './controllers/authController.js';
 import { submitComplaint } from './controllers/complaintController.js';
 import { createOrder, getOrders, getMyOrders, getOrderById, assignDeliveryPartner, markOrderPacked } from './controllers/orderController.js';
+import { getOrderInvoice, sendInvoiceEmailEndpoint, updateOrderStatus } from './controllers/invoiceController.js';
 
 dotenv.config();
 
@@ -119,6 +120,10 @@ app.get('/orders/:id', generalLimiter, getOrderById);
 app.put('/orders/:id/assign', protect, adminLooseLimiter, assignDeliveryPartner);
 // Alias: store manager pack (PUT /api/orders/:id/pack) — trusted -> loose
 app.put('/orders/:id/pack', protect, adminLooseLimiter, markOrderPacked);
+// Alias: invoice PDF + delivered-status email (purana frontend /orders/* par ho to bhi chale)
+app.get('/orders/:id/invoice', protect, generalLimiter, getOrderInvoice);
+app.put('/orders/:id/status', protect, adminLooseLimiter, updateOrderStatus);
+app.post('/orders/:id/send-invoice-email', protect, adminLooseLimiter, sendInvoiceEmailEndpoint);
 
 // Modular REST APIs
 // Products: general loose limit (100/min/IP).

@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   CreditCard,
+  Download,
   Heart,
   HelpCircle,
   Info,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getMyOrdersApi } from '../services/api';
+import { downloadOrderInvoice } from '../services/invoice';
 import { useWishlist } from '../context/WishlistContext';
 import { useCart } from '../context/CartContext';
 import ComplaintForm from '../components/ComplaintForm';
@@ -55,7 +57,21 @@ const Profile = () => {
   const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('supercart_payment_method') || 'Cash on Delivery');
   const [upiId, setUpiId] = useState(() => localStorage.getItem('supercart_upi_id') || '');
   const [paymentSaved, setPaymentSaved] = useState(false);
+  const [invoiceId, setInvoiceId] = useState(null);
+  const [invoiceError, setInvoiceError] = useState('');
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('supercart_dark_mode') === 'true');
+
+  const handleDownloadInvoice = async (orderId) => {
+    setInvoiceError('');
+    setInvoiceId(orderId);
+    try {
+      await downloadOrderInvoice(orderId);
+    } catch (e) {
+      setInvoiceError(e?.message || 'Could not download invoice.');
+    } finally {
+      setInvoiceId(null);
+    }
+  };
   const [activeSection, setActiveSection] = useState(() => {
     const fromMenu = location.state?.section;
     return ['personal', 'orders', 'payment', 'wishlist', 'appearance', 'complaints'].includes(fromMenu) ? fromMenu : 'personal';
@@ -230,6 +246,7 @@ const Profile = () => {
             </ProfileSection>}
 
             {activeSection === 'orders' && <ProfileSection icon={Package} title="Your orders" description="View your recent grocery orders and their status.">
+              {invoiceError && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{invoiceError}</p>}
               {ordersLoading ? (
                 <div className="flex items-center gap-2 py-4 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading orders...</div>
               ) : orders.length === 0 ? (
@@ -275,6 +292,12 @@ const Profile = () => {
                     </div>
 
                     <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3"><span className="text-xs font-bold text-slate-500">Total paid</span><span className="text-base font-black text-slate-900">₹{totalPrice}</span></div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={invoiceId === order.id} onClick={() => handleDownloadInvoice(order.id)} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-xs font-black text-white transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-60">
+                        <Download className="h-3.5 w-3.5" /> {invoiceId === order.id ? 'Preparing…' : 'Download Invoice'}
+                      </button>
+                    </div>
                   </article>
                 );
               })}

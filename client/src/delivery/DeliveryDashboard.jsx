@@ -5,6 +5,7 @@ import { supabase } from '../config/supabase';
 import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
 import { getDeliverySirenState, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
+import { triggerDeliveredInvoiceEmail } from '../services/invoice';
 
 // Map library भारी hai (~2MB) — sirf Delivery page par lazy load ho
 const DeliveryMap = React.lazy(() => import('./DeliveryMap'));
@@ -815,6 +816,8 @@ const DeliveryDashboard = () => {
       setError(updateError.message);
     } else {
       await loadOrders(user.id);
+      // Delivered hote hi customer ko invoice PDF email (backend, fire-and-forget).
+      if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(orderId);
     }
     setUpdatingId(null);
   };
