@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   CreditCard,
-  Download,
   Heart,
   HelpCircle,
   Info,
@@ -22,7 +21,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getMyOrdersApi } from '../services/api';
-import { downloadOrderInvoice } from '../services/invoice';
 import { useWishlist } from '../context/WishlistContext';
 import { useCart } from '../context/CartContext';
 import ComplaintForm from '../components/ComplaintForm';
@@ -57,21 +55,8 @@ const Profile = () => {
   const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('supercart_payment_method') || 'Cash on Delivery');
   const [upiId, setUpiId] = useState(() => localStorage.getItem('supercart_upi_id') || '');
   const [paymentSaved, setPaymentSaved] = useState(false);
-  const [invoiceId, setInvoiceId] = useState(null);
-  const [invoiceError, setInvoiceError] = useState('');
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('supercart_dark_mode') === 'true');
 
-  const handleDownloadInvoice = async (orderId) => {
-    setInvoiceError('');
-    setInvoiceId(orderId);
-    try {
-      await downloadOrderInvoice(orderId);
-    } catch (e) {
-      setInvoiceError(e?.message || 'Could not download invoice.');
-    } finally {
-      setInvoiceId(null);
-    }
-  };
   const [activeSection, setActiveSection] = useState(() => {
     const fromMenu = location.state?.section;
     return ['personal', 'orders', 'payment', 'wishlist', 'appearance', 'complaints'].includes(fromMenu) ? fromMenu : 'personal';
@@ -80,12 +65,21 @@ const Profile = () => {
 
   const profileOptions = [
     { id: 'personal', label: 'Personal details', icon: UserRound },
-    { id: 'orders', label: 'Your orders', icon: Package },
+    { id: 'orders', label: 'Order History', icon: Package },
     { id: 'payment', label: 'Payment settings', icon: CreditCard },
     { id: 'wishlist', label: 'Your wishlist', icon: Heart },
     { id: 'appearance', label: 'Appearance', icon: ShieldCheck },
     { id: 'complaints', label: 'Raise a Complaint', icon: HelpCircle },
   ];
+
+  const handleOptionClick = (id) => {
+    // Order History ab alag Blinkit-style pages par hai (list + detail).
+    if (id === 'orders') {
+      navigate('/profile/orders');
+      return;
+    }
+    setActiveSection(id);
+  };
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -98,13 +92,18 @@ const Profile = () => {
     }
   }, [activeSection]);
 
-  // Account menu se aaye to wahi section kholo (same route par dobara tap par bhi)
+  // Account menu se aaye to wahi section kholo (same route par dobara tap par bhi).
+  // Purana 'orders' section ab naye /profile/orders page par redirect hota hai.
   useEffect(() => {
     const fromMenu = location.state?.section;
-    if (['personal', 'orders', 'payment', 'wishlist', 'appearance'].includes(fromMenu)) {
+    if (fromMenu === 'orders') {
+      navigate('/profile/orders');
+      return;
+    }
+    if (['personal', 'payment', 'wishlist', 'appearance'].includes(fromMenu)) {
       setActiveSection(fromMenu);
     }
-  }, [location.state]);
+  }, [location.state, navigate]);
 
   useEffect(() => {
     // OAuth redirect ke baad session resolve hone me ~ms lagte hain —
@@ -205,12 +204,12 @@ const Profile = () => {
           </Link>
         </div>
 
-        <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-6">
           {profileOptions.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
-              onClick={() => setActiveSection(id)}
+              onClick={() => handleOptionClick(id)}
               className={`flex min-h-20 flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center text-xs font-bold transition sm:min-h-24 ${activeSection === id ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50/50'}`}
             >
               <Icon className="h-5 w-5" />
@@ -245,62 +244,21 @@ const Profile = () => {
               </form>
             </ProfileSection>}
 
-            {activeSection === 'orders' && <ProfileSection icon={Package} title="Your orders" description="View your recent grocery orders and their status.">
-              {invoiceError && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{invoiceError}</p>}
-              {ordersLoading ? (
-                <div className="flex items-center gap-2 py-4 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading orders...</div>
-              ) : orders.length === 0 ? (
-                <div className="rounded-2xl bg-slate-50 p-5 text-center">
-                  <Package className="mx-auto h-8 w-8 text-slate-300" />
-                  <p className="mt-2 text-sm font-bold text-slate-700">No orders yet</p>
-                  <Link to="/" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-emerald-600">Shop groceries <ChevronRight className="h-3.5 w-3.5" /></Link>
-                </div>
-              ) : orders.map((order) => {
-                const orderItems = order.order_items || order.orderItems || [];
-                const shippingAddress = order.shipping_address || order.shippingAddress || {};
-                const orderDate = order.created_at || order.createdAt;
-                const totalPrice = order.total_price ?? order.totalPrice ?? 0;
-
-                return (
-                  <article key={order.id} className="mb-4 min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4 last:mb-0">
-                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
-                      <div>
-                        <p className="text-sm font-black text-slate-900">Order #{String(order.id).slice(-8)}</p>
-                        <p className="mt-1 text-xs text-slate-500">{orderDate ? new Date(orderDate).toLocaleString('en-IN') : 'Recent order'}</p>
-                      </div>
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-black text-emerald-700">{order.status || 'Placed'}</span>
-                    </div>
-
-                    <div className="grid gap-3 py-3 text-xs sm:grid-cols-2">
-                      <div><p className="font-bold text-slate-500">Payment</p><p className="mt-1 font-bold text-slate-800">{order.payment_method || order.paymentMethod || 'Cash On Delivery'}</p></div>
-                      <div><p className="font-bold text-slate-500">Delivery location</p><p className="mt-1 font-bold text-slate-800">{shippingAddress.address || shippingAddress.label || 'Home delivery'}</p></div>
-                    </div>
-
-                    <div className="border-t border-slate-200 pt-3">
-                      <p className="mb-2 text-xs font-black text-slate-700">Products ({orderItems.length})</p>
-                      <div className="space-y-2">
-                        {orderItems.map((item, index) => (
-                          <div key={`${order.id}-${item.productId || item.id || index}`} className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-white p-2.5">
-                            <div className="flex min-w-0 items-center gap-2">
-                              {item.image && <img src={item.image} alt="" className="h-9 w-9 shrink-0 rounded-lg object-contain sm:h-10 sm:w-10" />}
-                              <div className="min-w-0"><p className="break-words text-xs font-bold text-slate-800">{item.name}</p><p className="text-[11px] text-slate-500">Qty: {item.quantity} · ₹{item.price} each</p></div>
-                            </div>
-                            <p className="shrink-0 text-xs font-black text-slate-900">₹{Number(item.price || 0) * Number(item.quantity || 0)}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3"><span className="text-xs font-bold text-slate-500">Total paid</span><span className="text-base font-black text-slate-900">₹{totalPrice}</span></div>
-
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <button type="button" disabled={invoiceId === order.id} onClick={() => handleDownloadInvoice(order.id)} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-xs font-black text-white transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-60">
-                        <Download className="h-3.5 w-3.5" /> {invoiceId === order.id ? 'Preparing…' : 'Download Invoice'}
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+            {activeSection === 'orders' && <ProfileSection icon={Package} title="Order History" description="Blinkit-style list, search, reorder aur invoice — sab naye page par.">
+              <div className="rounded-2xl bg-slate-50 p-5 text-center">
+                <Package className="mx-auto h-8 w-8 text-emerald-500" />
+                <p className="mt-2 text-sm font-black text-slate-800">
+                  {ordersLoading ? 'Loading orders…' : `${orders.length} order${orders.length === 1 ? '' : 's'} found`}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Search, status, thumbnails, Reorder / Rate aur View + Download Invoice ke saath.</p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/profile/orders')}
+                  className="mt-3 inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-emerald-700"
+                >
+                  Open Order History <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </ProfileSection>}
 
             {activeSection === 'payment' && <ProfileSection icon={CreditCard} title="Payment settings" description="Choose your preferred payment method for checkout.">

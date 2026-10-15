@@ -24,9 +24,8 @@ const invoiceUrls = (orderId) => {
   return [...new Set([`${root}/api/orders/${orderId}/invoice`, `${root}/orders/${orderId}/invoice`])];
 };
 
-// User/Admin: "Download Invoice" button — PDF download (naye tab me bhi khul sakta hai).
-// Returns { ok:true } ya throw Error.
-export const downloadOrderInvoice = async (orderId) => {
+// Shared: invoice PDF blob lao (View + Download dono ke liye same backend).
+const fetchInvoicePdfBlob = async (orderId) => {
   const token = await getToken();
   let lastError = null;
   for (const url of invoiceUrls(orderId)) {
@@ -44,16 +43,7 @@ export const downloadOrderInvoice = async (orderId) => {
       }
       const blob = await res.blob();
       if (!blob || blob.size === 0) throw new Error('Empty invoice PDF');
-      const objUrl = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = `SuperCart-Order-${orderId}.pdf`;
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objUrl), 10_000);
-      return { ok: true };
+      return new Blob([blob], { type: 'application/pdf' });
     } catch (e) {
       lastError = e;
       // Network fail ho to dusri URL try karo, HTTP error ho to turant throw.
@@ -61,7 +51,39 @@ export const downloadOrderInvoice = async (orderId) => {
       if (!isNetwork) throw e;
     }
   }
-  throw lastError || new Error('Could not download invoice. Check backend.');
+  throw lastError || new Error('Could not load invoice. Check backend.');
+};
+
+// User/Admin: "Download Invoice" button — PDF file save hoti hai.
+// Returns { ok:true } ya throw Error.
+export const downloadOrderInvoice = async (orderId) => {
+  const pdfBlob = await fetchInvoicePdfBlob(orderId);
+  const objUrl = URL.createObjectURL(pdfBlob);
+  const a = document.createElement('a');
+  a.href = objUrl;
+  a.download = `SuperCart-Order-${orderId}.pdf`;
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objUrl), 10_000);
+  return { ok: true };
+};
+
+// User: "View Invoice" button — naya tab me PDF kholo (download nahi, sirf dekho).
+// Popup-blocker se bachne ke liye tab pehle kholo, phir PDF load karke usme dikhao.
+// Returns { ok:true } ya throw Error.
+export const viewOrderInvoice = async (orderId) => {
+  const viewerTab = window.open('', '_blank');
+  if (!viewerTab) throw new Error('Popup blocked. Please allow popups to view invoice.');
+  try {
+    viewerTab.document.write('<p style="font-family:sans-serif;padding:24px">Loading invoice…</p>');
+  } catch { /* cross-origin blank tab, ignore */ }
+  const pdfBlob = await fetchInvoicePdfBlob(orderId);
+  const objUrl = URL.createObjectURL(pdfBlob);
+  viewerTab.location.href = objUrl;
+  setTimeout(() => URL.revokeObjectURL(objUrl), 60_000);
+  return { ok: true };
 };
 
 // Delivered hote hi backend ko invoice-email bhejne ko bolo.
@@ -86,4 +108,4 @@ export const triggerDeliveredInvoiceEmail = async (orderId) => {
   }
 };
 
-export default { downloadOrderInvoice, triggerDeliveredInvoiceEmail };
+export default { downloadOrderInvoice, viewOrderInvoice, triggerDeliveredInvoiceEmail };

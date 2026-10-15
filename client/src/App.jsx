@@ -6,6 +6,8 @@ import Home from './pages/Home';
 import Cart from './pages/Cart';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
+import OrderHistory from './pages/OrderHistory';
+import OrderDetail from './pages/OrderDetail';
 import TermsAndConditions from './pages/TermsAndConditions';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import FloatingCart from './components/layout/FloatingCart';
@@ -62,7 +64,7 @@ function ScrollToTop() {
  */
 function ShopLayout({ searchQuery, setSearchQuery, selectedCategory, setSelectedCategory }) {
   const { pathname } = useLocation();
-  const isProfile = pathname === '/profile';
+  const isProfile = pathname === '/profile' || pathname.startsWith('/profile/orders');
 
   return (
     <>
@@ -79,6 +81,8 @@ function ShopLayout({ searchQuery, setSearchQuery, selectedCategory, setSelected
           <Route path="/" element={<Home searchQuery={searchQuery} selectedCategory={selectedCategory} setSelectedCategory={setSelectedCategory} />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/profile/orders" element={<OrderHistory />} />
+          <Route path="/profile/orders/:id" element={<OrderDetail />} />
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
         </Routes>
