@@ -257,6 +257,48 @@ export const loginUser = async (req, res) => {
   }
 };
 
+// @desc    Forgot password — reset link email karo (rate-limited: 3/hour/IP)
+// @route   POST /api/auth/forgot-password (alias: /forgot-password)
+// @access  Public
+// Note: hamesha SAME success message (email enumumeration na ho —
+// attacker ko pata na chale kaunsi email registered hai).
+export const forgotPassword = async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address',
+      });
+    }
+
+    const redirectTo =
+      String(req.body?.redirectTo || '').trim() ||
+      process.env.PASSWORD_RESET_REDIRECT_URL ||
+      undefined;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      ...(redirectTo ? { redirectTo } : {}),
+    });
+
+    if (error) {
+      console.warn('⚠️ Forgot-password Supabase warning:', error.message);
+      // Email-bombing probing roko — phir bhi generic success (enumumeration nahi).
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'If this email is registered, you will receive a reset link',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error while requesting password reset',
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Get user profile
 // @route   GET /api/auth/profile
 // @access  Private

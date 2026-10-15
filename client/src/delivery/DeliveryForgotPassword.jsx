@@ -1,24 +1,35 @@
 import React, { useState } from 'react';
 import { ArrowLeft, ArrowRight, Mail, Truck } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../config/supabase';
+import { forgotPasswordApi } from '../services/api';
 
 const DeliveryForgotPassword = () => {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const deliveryResetRedirectUrl = import.meta.env.VITE_DELIVERY_RESET_REDIRECT_URL || 'http://localhost:5173/delivery/reset-password';
 
   const submit = async (event) => {
     event.preventDefault();
     setMessage('');
+    setErrorMsg('');
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: deliveryResetRedirectUrl,
-    });
-    if (error) console.error('Password reset request failed:', error);
-    setMessage('If this email is registered, you will receive a reset link');
-    setLoading(false);
+    try {
+      // Backend rate-limited (3/hour/IP) — 429 par friendly Hindi, fallback nahi.
+      const res = await forgotPasswordApi(email.trim(), deliveryResetRedirectUrl);
+      setMessage(res?.message || 'If this email is registered, you will receive a reset link');
+    } catch (e) {
+      if (e?.isRateLimited) {
+        setErrorMsg(e.message || 'Bahut zyada password-reset attempts ho gaye, 1 ghante baad try karein');
+      } else {
+        // Backend-down case me forgotPasswordApi khud Supabase-direct bhejta
+        // hai, isliye yahan generic success (email enumeration nahi).
+        setMessage('If this email is registered, you will receive a reset link');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -29,7 +40,8 @@ const DeliveryForgotPassword = () => {
           <h1 className="mt-4 text-2xl font-black">Forgot Password?</h1>
           <p className="mt-1 text-sm text-slate-400">Enter your registered email.</p>
         </div>
-        {message && <p className="mb-4 rounded-xl bg-emerald-950 p-3 text-xs font-bold text-emerald-300">{message}</p>}
+        {message && <p role="status" className="mb-4 rounded-xl bg-emerald-950 p-3 text-xs font-bold text-emerald-300">{message}</p>}
+        {errorMsg && <p role="alert" className="mb-4 rounded-xl bg-amber-950 p-3 text-xs font-bold text-amber-300">{errorMsg}</p>}
         <label className="block text-xs font-bold text-slate-300">Email
           <span className="relative mt-1.5 block"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 pl-10 text-sm text-white outline-none focus:border-emerald-500" /></span>
         </label>

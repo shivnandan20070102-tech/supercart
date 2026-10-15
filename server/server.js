@@ -5,16 +5,31 @@ import morgan from 'morgan';
 import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
+import complaintRoutes from './routes/complaintRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
-import { protect } from './middleware/authMiddleware.js';
+import { optionalAuth, protect } from './middleware/authMiddleware.js';
+import {
+  adminLooseLimiter,
+  complaintLimiter,
+  forgotPasswordLimiter,
+  generalLimiter,
+  loginLimiter,
+  orderLimiter,
+  signupLimiter,
+} from './middleware/rateLimit.js';
 import { startPendingAssignmentWorker } from './jobs/pendingAssignmentWorker.js';
 import { getProducts, getProductById } from './controllers/productController.js';
-import { loginUser, signupUser } from './controllers/authController.js';
+import { forgotPassword, loginUser, signupUser } from './controllers/authController.js';
+import { submitComplaint } from './controllers/complaintController.js';
 import { createOrder, getOrders, getMyOrders, getOrderById, assignDeliveryPartner, markOrderPacked } from './controllers/orderController.js';
 
 dotenv.config();
 
 const app = express();
+
+// Render (proxy) ke peeche sahi client IP ke liye zaroori — bina iske
+// saare users ek hi IP (proxy) se gine jayenge. 1 = pehla trusted proxy.
+app.set('trust proxy', 1);
 
 // Body Parser Middleware
 app.use(express.json());
@@ -83,25 +98,35 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Direct Top-Level APIs
-app.get('/products', getProducts);
-app.get('/products/:id', getProductById);
-app.post('/login', loginUser);
-app.post('/signup', signupUser);
-app.post('/orders', createOrder);
+// Direct Top-Level APIs (legacy aliases — SAME rate limits as /api/*)
+// Products/browse: 100 req/min/IP (loose — normal use affect na ho).
+app.get('/products', generalLimiter, getProducts);
+app.get('/products/:id', generalLimiter, getProductById);
+// Auth: login 5/15min, signup 3/hour, forgot 3/hour (per-IP brute-force guard).
+app.post('/login', loginLimiter, loginUser);
+app.post('/signup', signupLimiter, signupUser);
+app.post('/forgot-password', forgotPasswordLimiter, forgotPassword);
+// Order place: 10/hour/User. optionalAuth PEHLE taaki logged-in user ka
+// per-USER bucket bane (guest/bina-token par IP fallback — bot bhi ruke).
+app.post('/orders', optionalAuth, orderLimiter, createOrder);
+// Complaints alias: 5/hour/User.
+app.post('/complaints', protect, complaintLimiter, submitComplaint);
 // Alias for old frontend (frontend calls /orders/myorders, new standard is /api/orders/myorders)
 // No behaviour change for any user - both URLs return same per-user filtered orders
-app.get('/orders/myorders', getMyOrders);
-app.get('/orders/:id', getOrderById);
-// Alias: admin manual override (PUT /api/orders/:id/assign)
-app.put('/orders/:id/assign', protect, assignDeliveryPartner);
-// Alias: store manager pack (PUT /api/orders/:id/pack)
-app.put('/orders/:id/pack', protect, markOrderPacked);
+app.get('/orders/myorders', generalLimiter, getMyOrders);
+app.get('/orders/:id', generalLimiter, getOrderById);
+// Alias: admin manual override (PUT /api/orders/:id/assign) — trusted -> loose
+app.put('/orders/:id/assign', protect, adminLooseLimiter, assignDeliveryPartner);
+// Alias: store manager pack (PUT /api/orders/:id/pack) — trusted -> loose
+app.put('/orders/:id/pack', protect, adminLooseLimiter, markOrderPacked);
 
 // Modular REST APIs
-app.use('/api/products', productRoutes);
+// Products: general loose limit (100/min/IP).
+app.use('/api/products', generalLimiter, productRoutes);
+// Auth/Orders/Complaints routers me route-level specific limiters lage hain.
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/complaints', complaintRoutes);
 
 // Global Error Handlers
 app.use(notFound);

@@ -1,5 +1,14 @@
 import React, { createContext, useCallback, useContext, useRef, useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
+import {
+  clearLoginAttempts,
+  clearSignupAttempts,
+  getLoginBlockState,
+  getSignupBlockState,
+  recordFailedLoginAttempt,
+  recordFailedSignupAttempt,
+  toFriendlySupabaseAuthError,
+} from '../utils/rateLimit';
 
 const AuthContext = createContext();
 
@@ -381,26 +390,65 @@ export const AuthProvider = ({ children }) => {
     return activeUser;
   };
 
+  // Email login — brute-force guard:
+  // 1) Pehle client-side block check (5 galat / 15 min -> 6th par Hindi block,
+  //    backend loginLimiter ka mirror — Login Page test isi se pass hota hai).
+  // 2) Supabase ka apna throttling (429 / "Email rate limit exceeded") bhi
+  //    friendly Hindi me map hota hai (generic "Error" kabhi nahi).
+  // Backend /api/auth/login limiter direct-API bots ko rokta hai; session
+  // yahin Supabase se banta hai taaki complaints/orders fallback na toote.
   const signInWithEmail = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { success: false, message: error.message };
+    const cleanEmail = String(email || '').trim();
+    const preBlocked = getLoginBlockState(cleanEmail);
+    if (preBlocked.blocked) {
+      return { success: false, message: preBlocked.message, isRateLimited: true, retryAfterSeconds: preBlocked.retryAfterSeconds || 0 };
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    if (error) {
+      const friendly = toFriendlySupabaseAuthError(error);
+      const isSupabaseRateLimited = friendly !== String(error.message || '');
+      const after = recordFailedLoginAttempt(cleanEmail);
+      // 5 fail ke baad agla attempt blocked — abhi se block message dikhao
+      // taaki user ko exact wait pata chale (backend 6th-429 jaisa).
+      if (after.blocked) {
+        return { success: false, message: after.message, isRateLimited: true, retryAfterSeconds: after.retryAfterSeconds || 0 };
+      }
+      if (isSupabaseRateLimited) {
+        return { success: false, message: friendly, isRateLimited: true };
+      }
+      return { success: false, message: error.message };
+    }
 
+    clearLoginAttempts(cleanEmail);
     const activeUser = saveSupabaseUser(data.user, 'email');
     if (data.session?.access_token) localStorage.setItem('supercart_token', data.session.access_token);
     return { success: true, user: activeUser };
   };
 
   const signUpWithEmail = async ({ name, email, password, phone, role = 'customer' }) => {
+    const cleanEmail = String(email || '').trim();
+    const preBlocked = getSignupBlockState(cleanEmail);
+    if (preBlocked.blocked) {
+      return { success: false, message: preBlocked.message, isRateLimited: true };
+    }
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
         data: { full_name: name, phone, role },
         emailRedirectTo: window.location.origin,
       },
     });
-    if (error) return { success: false, message: error.message };
+    if (error) {
+      const friendly = toFriendlySupabaseAuthError(error);
+      if (friendly !== String(error.message || '')) {
+        return { success: false, message: friendly, isRateLimited: true };
+      }
+      recordFailedSignupAttempt(cleanEmail);
+      return { success: false, message: error.message };
+    }
 
+    clearSignupAttempts(cleanEmail);
     if (!data.session) {
       return {
         success: true,

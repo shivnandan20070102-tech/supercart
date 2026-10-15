@@ -57,6 +57,11 @@ const assertOwnSession = async (supabase, userId) => {
 
 const toFriendlyComplaintError = (e) => {
   const msg = String(e?.message || '');
+  if (e?.isRateLimited || /too many|rate.?limit|bahut zyada|ghante baad|kuch der baad/i.test(msg)) {
+    const err = new Error(msg || 'Bahut zyada complaints ho gayi, 1 ghante baad try karein');
+    err.isRateLimited = true;
+    return err;
+  }
   if (/row-level security|violates.*policy|not allowed|permission denied/i.test(msg)) {
     return new Error(
       'Could not submit (permission denied). Please log out, log in again, then retry. ' +
@@ -84,6 +89,47 @@ export const uploadComplaintPhoto = async (supabase, userId, file) => {
   return supabase.storage.from(COMPLAINT_PHOTO_BUCKET).getPublicUrl(path).data.publicUrl || '';
 };
 
+// Backend-first submit (rate-limited 5/hour/User -> friendly Hindi 429).
+// Flow: validate -> photo upload (client session) -> POST /api/complaints.
+// Backend 429 FINAL hai (fallback NAHI — warna spam-guard bypass).
+// Backend down/network ho to direct-Supabase fallback (genuine complaint na ruke).
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
+
+const readJsonSafe = async (res) => {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+};
+
+const isNetworkFailure = (e) =>
+  e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(e?.message || ''));
+
+export const submitComplaintViaBackend = async ({ token, type, name, subject, description, photoUrl }) => {
+  const res = await fetch(`${API_BASE_URL}/api/complaints`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ type, name, subject, description, photo_url: photoUrl || '' }),
+  });
+  const json = await readJsonSafe(res);
+  if (res.status === 429 || json?.code === 'RATE_LIMITED') {
+    const err = new Error(String(json?.message || '').trim() || 'Bahut zyada complaints ho gayi, 1 ghante baad try karein');
+    err.isRateLimited = true;
+    err.status = 429;
+    throw err;
+  }
+  if (!res.ok || json?.success === false) {
+    const err = new Error(json?.message || 'Could not submit complaint.');
+    err.status = res.status;
+    throw err;
+  }
+  return json?.data || json;
+};
+
 // Supabase: poori submit (validate + upload + insert). Returns inserted row.
 export const submitComplaint = async (supabase, { userId, type, name, subject, description, file }) => {
   if (!COMPLAINT_TYPES.includes(type)) throw new Error('Invalid complainant type.');
@@ -96,6 +142,32 @@ export const submitComplaint = async (supabase, { userId, type, name, subject, d
   } catch (e) {
     throw toFriendlyComplaintError(e);
   }
+  // 1) Backend rate-limited entry (spam-guard). Token: fresh session preferred.
+  try {
+    let token = '';
+    try {
+      token = (await supabase.auth.getSession()).data.session?.access_token || '';
+    } catch { /* ignore */ }
+    if (!token) {
+      try {
+        token = localStorage.getItem('supercart_token') || '';
+      } catch { /* ignore */ }
+    }
+    const saved = await submitComplaintViaBackend({
+      token,
+      type,
+      name,
+      subject: String(subject).trim().slice(0, 200),
+      description: String(description).trim().slice(0, 5000),
+      photoUrl,
+    });
+    if (saved) return saved;
+  } catch (e) {
+    // 429 / validation / auth-final: seedha UI tak (fallback se bypass NAHI).
+    if (e?.isRateLimited || (e?.status && e.status !== 0 && !isNetworkFailure(e))) throw e;
+    // Network/backend-down: neeche direct-Supabase fallback.
+  }
+  // 2) Fallback: direct Supabase insert (backend unreachable case only).
   try {
     const { data, error } = await supabase
       .from('complaints')

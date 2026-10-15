@@ -117,13 +117,39 @@ export const fetchProducts = async (category = '', search = '', options = {}) =>
   return mockCatalogFallback(category, search);
 };
 
+// 429 (RATE_LIMITED) ko friendly Hindi Error me badlo — caller seedha
+// error.message UI me dikhata hai (generic "Error" kabhi nahi).
+const throwIfRateLimited = (res, json) => {
+  if (res?.status !== 429 && json?.code !== 'RATE_LIMITED') return;
+  const retryAfterSeconds =
+    Number(json?.retryAfterSeconds) || Number(res?.headers?.get?.('Retry-After')) || 0;
+  const message =
+    String(json?.message || '').trim() ||
+    'Bahut zyada attempts ho gaye, kuch der baad try karein';
+  const err = new Error(message);
+  err.isRateLimited = true;
+  err.status = 429;
+  err.retryAfterSeconds = retryAfterSeconds;
+  throw err;
+};
+
+const readJsonSafe = async (res) => {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+};
+
 export const loginApi = async (email, password) => {
   const res = await fetch(`${API_BASE_URL}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
-  return await res.json();
+  const json = await readJsonSafe(res);
+  throwIfRateLimited(res, json);
+  return json;
 };
 
 export const signupApi = async (userData) => {
@@ -132,7 +158,90 @@ export const signupApi = async (userData) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(userData),
   });
-  return await res.json();
+  const json = await readJsonSafe(res);
+  throwIfRateLimited(res, json);
+  return json;
+};
+
+// Forgot password — backend rate-limited (3/hour/IP), down ho to direct Supabase.
+// 429 par fallback NAHI (block ka faisla final — friendly Hindi throw).
+export const forgotPasswordApi = async (email, redirectTo) => {
+  const clean = String(email || '').trim();
+  if (!clean) throw new Error('Please provide a valid email address');
+  const urlsToTry = [`${API_BASE_URL}/api/auth/forgot-password`, `${API_BASE_URL}/forgot-password`];
+  let lastNetworkError = null;
+  for (const url of urlsToTry) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: clean, ...(redirectTo ? { redirectTo } : {}) }),
+      });
+      const json = await readJsonSafe(res);
+      throwIfRateLimited(res, json);
+      if (res.ok && json?.success !== false) return json;
+      // Backend tak baat pahunchi (validation error etc.) — uska message final.
+      if (res.status !== 404) {
+        throw new Error(json?.message || 'Could not send reset link. Please try again.');
+      }
+    } catch (error) {
+      if (error?.isRateLimited) throw error;
+      const isNetworkFailure =
+        error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(error?.message || '');
+      if (!isNetworkFailure && !/404|not found/i.test(error?.message || '')) throw error;
+      lastNetworkError = error;
+    }
+  }
+  // Backend unreachable — direct Supabase (same UX message).
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+      ...(redirectTo ? { redirectTo } : {}),
+    });
+    if (error) {
+      if (/rate.?limit|too many/i.test(error.message || '')) {
+        const err = new Error('Bahut zyada password-reset attempts ho gaye, 1 ghante baad try karein');
+        err.isRateLimited = true;
+        throw err;
+      }
+      console.error('Password reset request failed:', error);
+    }
+  } catch (error) {
+    if (error?.isRateLimited) throw error;
+    console.error('Password reset fallback failed:', error?.message || error);
+  }
+  if (lastNetworkError && !/404|not found/i.test(lastNetworkError?.message || '')) {
+    // Network tha par Supabase fallback chal gaya — generic success neeche.
+  }
+  return { success: true, message: 'If this email is registered, you will receive a reset link' };
+};
+
+// Complaint backend-first submit (rate-limited 5/hour/User).
+// Photo pehle Storage me upload hoti hai (client session se) — yahan sirf
+// photo_url bhejo. 429 par fallback NAHI. Backend down ho to direct-Supabase
+// fallback taaki genuine complaint na ruke.
+export const submitComplaintViaBackend = async ({ type, name, subject, description, photoUrl }) => {
+  const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: {} }));
+  const token = session?.access_token || localStorage.getItem('supercart_token') || '';
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/complaints`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ type, name, subject, description, photo_url: photoUrl || '' }),
+    });
+    const json = await readJsonSafe(res);
+    throwIfRateLimited(res, json);
+    if (res.ok && json?.success !== false) return json;
+    const err = new Error(json?.message || 'Could not submit complaint.');
+    err.status = res.status;
+    throw err;
+  } catch (error) {
+    // Mark karo taaki caller decide kare: rate-limit / auth-final vs network-fallback.
+    if (error?.isRateLimited) throw error;
+    throw error;
+  }
 };
 
 export const createOrderApi = async (orderData) => {
@@ -147,14 +256,20 @@ export const createOrderApi = async (orderData) => {
       },
       body: JSON.stringify(orderData),
     });
-    const response = await res.json();
-    if (response.success) {
+    const response = await readJsonSafe(res);
+    throwIfRateLimited(res, response);
+    if (response?.success) {
       // Backend returns single order object (not array) - return as-is, no filtering needed
       // Per-user isolation is already handled by backend via user_id
       return response;
     }
-    throw new Error(response.message || 'Order could not be placed.');
+    const orderErr = new Error(response?.message || 'Order could not be placed.');
+    orderErr.status = res.status;
+    throw orderErr;
   } catch (error) {
+    // Rate-limit block FINAL hai — direct-Supabase/local fallback se BYPASS
+    // kabhi mat karo (warna spam-guard bekaar). Friendly Hindi seedha UI tak.
+    if (error?.isRateLimited || error?.status === 429) throw error;
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
       // Backend down hai to authoritative server resolution nahi ho sakta —
@@ -547,6 +662,8 @@ export default {
   fetchProducts,
   loginApi,
   signupApi,
+  forgotPasswordApi,
+  submitComplaintViaBackend,
   createOrderApi,
   getMyOrdersApi,
   validateCouponApi,

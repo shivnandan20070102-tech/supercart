@@ -38,3 +38,34 @@ export const protect = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Not authorized, no token provided' });
   }
 };
+
+// Optional auth — rate-limit key ke liye user id nikalo, reject KABHI mat karo.
+// Public aliases (POST /orders) par logged-in user ho to per-USER bucket mile,
+// guest ho to IP fallback (orderLimiter khud decide karta hai). Kabhi 401 nahi.
+export const optionalAuth = async (req, _res, next) => {
+  try {
+    const header = req.headers.authorization || '';
+    if (header.startsWith('Bearer ')) {
+      const token = header.split(' ')[1];
+      if (token) {
+        const { data: { user: supabaseUser } } = await supabase.auth.getUser(token);
+        if (supabaseUser) {
+          req.user = {
+            id: supabaseUser.id,
+            email: supabaseUser.email,
+            name: supabaseUser.user_metadata?.full_name || supabaseUser.email,
+          };
+          return next();
+        }
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret_jwt_key_grocery_app_12345');
+          if (decoded?.id) {
+            const dbUser = await User.findById(decoded.id).select('-password');
+            if (dbUser) req.user = dbUser;
+          }
+        } catch { /* legacy token invalid — guest ki tarah aage badho */ }
+      }
+    }
+  } catch { /* best-effort only — kabhi request mat roko */ }
+  return next();
+};

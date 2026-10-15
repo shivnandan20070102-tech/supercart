@@ -13,8 +13,10 @@ import {
   AlertCircle,
   ShieldCheck,
   Loader2,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { isRateLimitMessage } from '../utils/rateLimit';
 
 // Google G Logo SVG Component
 const GoogleIcon = () => (
@@ -32,6 +34,7 @@ const Login = () => {
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', password: '' });
   const [message, setMessage] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isRateLimited, setIsRateLimited] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const navigate = useNavigate();
@@ -54,7 +57,16 @@ const Login = () => {
     e.preventDefault();
     setMessage('');
     setErrorMsg('');
+    setIsRateLimited(false);
     setLoading(true);
+
+    // Rate-limit ko friendly Hindi me dikhao (generic "Error" kabhi nahi).
+    const showFailure = (res) => {
+      const msg = res?.message || (isLogin ? 'Login failed. Please check your credentials.' : 'Signup failed. Please try again.');
+      const limited = Boolean(res?.isRateLimited) || isRateLimitMessage(msg);
+      setIsRateLimited(limited);
+      setErrorMsg(msg);
+    };
 
     try {
       if (isLogin) {
@@ -63,7 +75,7 @@ const Login = () => {
           setMessage(`Welcome back, ${res.user?.name || formData.email}! Logged in successfully.`);
           setTimeout(() => navigate('/'), 1200);
         } else {
-          setErrorMsg(res.message || 'Login failed. Please check your credentials.');
+          showFailure(res);
         }
       } else {
         const res = await signUpWithEmail(formData);
@@ -81,11 +93,14 @@ const Login = () => {
           setMessage(`Account created for ${formData.name}! Redirecting...`);
           setTimeout(() => navigate('/'), 1200);
         } else {
-          setErrorMsg(res.message || 'Signup failed. Please try again.');
+          showFailure(res);
         }
       }
     } catch (err) {
-      setErrorMsg('Account service could not be reached. Please try again.');
+      const msg = err?.message || 'Account service could not be reached. Please try again.';
+      const limited = Boolean(err?.isRateLimited) || isRateLimitMessage(msg);
+      setIsRateLimited(limited);
+      setErrorMsg(limited ? msg : 'Account service could not be reached. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -137,14 +152,14 @@ const Login = () => {
         <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl mb-6">
           <button
             type="button"
-            onClick={() => { setIsLogin(true); setMessage(''); setErrorMsg(''); }}
+            onClick={() => { setIsLogin(true); setMessage(''); setErrorMsg(''); setIsRateLimited(false); }}
             className={`py-2 text-xs font-bold rounded-xl transition cursor-pointer ${isLogin ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'}`}
           >
             Login
           </button>
           <button
             type="button"
-            onClick={() => { setIsLogin(false); setMessage(''); setErrorMsg(''); }}
+            onClick={() => { setIsLogin(false); setMessage(''); setErrorMsg(''); setIsRateLimited(false); }}
             className={`py-2 text-xs font-bold rounded-xl transition cursor-pointer ${!isLogin ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'}`}
           >
             Sign Up
@@ -192,8 +207,19 @@ const Login = () => {
           </div>
         )}
         {errorMsg && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+          <div
+            role="alert"
+            className={`mb-4 p-3 text-xs font-semibold rounded-xl flex items-center gap-2 border ${
+              isRateLimited
+                ? 'bg-amber-50 border-amber-300 text-amber-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {isRateLimited ? (
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            )}
             <span>{errorMsg}</span>
           </div>
         )}

@@ -859,7 +859,16 @@ const Cart = () => {
               {isCheckingOut && <LoadingState label="Saving your order securely..." />}
 
               {checkoutError && (
-                <p className="text-xs text-red-600 font-semibold text-center">{checkoutError}</p>
+                <p
+                  role="alert"
+                  className={`text-xs font-semibold text-center rounded-xl p-2.5 ${
+                    /bahut zyada|too many|ghante baad|minute baad|kuch der baad/i.test(checkoutError)
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                      : 'text-red-600'
+                  }`}
+                >
+                  {checkoutError}
+                </p>
               )}
 
               <p className="text-[10px] text-center text-slate-400 flex items-center justify-center gap-1 mt-2">
