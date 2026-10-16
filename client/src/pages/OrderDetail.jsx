@@ -12,13 +12,25 @@ import {
   MapPin,
   MessageCircle,
   Package,
+  Phone,
   Repeat2,
   Star,
+  Truck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { getMyOrdersApi } from '../services/api';
+import { supabase } from '../config/supabase';
 import { downloadOrderInvoice, viewOrderInvoice } from '../services/invoice';
+
+// Live map (~2MB) sirf trackable order par lazy load ho — list/detail ki
+// initial load halki rahe.
+const OrderTrackingMap = React.lazy(() => import('../components/OrderTrackingMap'));
+
+// Jin status me delivery partner ke paas order hai — SIRF tabhi tracking
+// section dikhta hai. pending/pending_assignment/packed (bina partner) +
+// delivered/cancelled par section hidden rehta hai.
+const TRACKABLE_STATUSES = new Set(['assigned', 'accepted', 'picked_up', 'out_for_delivery']);
 import {
   arrivedAtTime,
   formatOrderPlaced,
@@ -57,6 +69,7 @@ const OrderDetail = () => {
   const [hoverRating, setHoverRating] = useState(0);
   const [rated, setRated] = useState(false);
   const [showRateBox, setShowRateBox] = useState(false);
+  const [partner, setPartner] = useState(null);
 
   useEffect(() => {
     if (searchParams.get('rate') === '1') setShowRateBox(true);
@@ -98,6 +111,60 @@ const OrderDetail = () => {
 
   const items = useMemo(() => getOrderItems(order || {}), [order]);
   const bill = useMemo(() => getBillDetails(order || {}), [order]);
+
+  // Live delivery tracking — SIRF jab partner assign ho aur order uske paas ho.
+  const riderId = useMemo(() => {
+    const raw = order?.delivery_boy_id;
+    if (raw == null || String(raw).trim() === '') return null;
+    return String(raw);
+  }, [order]);
+  const statusKey = String(order?.status || '').toLowerCase();
+  const showTracking = Boolean(riderId && TRACKABLE_STATUSES.has(statusKey));
+
+  // Partner ka naam/phone lao (trackable hote hi).
+  useEffect(() => {
+    if (!showTracking || !riderId) {
+      setPartner(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('id, name, phone')
+          .eq('id', riderId)
+          .maybeSingle();
+        if (!cancelled) setPartner(data || null);
+      } catch {
+        if (!cancelled) setPartner(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showTracking, riderId]);
+
+  // Order status live: store pack / partner accept karte hi ye page khud
+  // update ho jaye (bina refresh tracking section aa jayega).
+  useEffect(() => {
+    if (!id) return undefined;
+    const channel = supabase
+      .channel(`order-detail-${id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${id}` },
+        (payload) => {
+          if (payload?.new) setOrder((prev) => ({ ...(prev || {}), ...payload.new }));
+        },
+      )
+      .subscribe();
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch { /* ignore */ }
+    };
+  }, [id]);
 
   const handleView = async () => {
     setInvoiceError('');
@@ -241,6 +308,56 @@ const OrderDetail = () => {
         {invoiceError && (
           <p className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{invoiceError}</p>
         )}
+
+        {/* Live delivery tracking — SIRF accepted/out_for_delivery (partner ke
+            paas order) par. pending/packed (bina partner) par hidden. */}
+        {showTracking && (() => {
+          const addr = order.shipping_address || order.shippingAddress || {};
+          const dropLat = addr.latitude ?? addr.lat ?? null;
+          const dropLng = addr.longitude ?? addr.lng ?? null;
+          return (
+            <section aria-label="Live delivery tracking" className="rounded-2xl border border-blue-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-[13px] font-black text-slate-900">
+                  <Truck className="h-4 w-4 text-blue-600" />
+                  Delivery Partner
+                </p>
+                <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600" />
+                  {prettyStatus(order)}
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-black text-slate-800">
+                {partner?.name || 'Delivery partner assigned'}
+              </p>
+              {partner?.phone && (
+                <a
+                  href={`tel:${partner.phone}`}
+                  className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-bold text-emerald-700 hover:underline"
+                >
+                  <Phone className="h-3.5 w-3.5" />
+                  {partner.phone}
+                </a>
+              )}
+              <div className="mt-3">
+                <React.Suspense
+                  fallback={
+                    <div className="flex h-56 items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-slate-500">
+                      Loading live map…
+                    </div>
+                  }
+                >
+                  <OrderTrackingMap
+                    riderId={riderId}
+                    dropLat={dropLat}
+                    dropLng={dropLng}
+                    dropLabel={getDeliveryAddressLine(order)}
+                  />
+                </React.Suspense>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* Invoice actions — View + Download dono saath me */}
         <section className="rounded-2xl border border-slate-200 bg-white p-4">

@@ -318,7 +318,9 @@ export const createOrderApi = async (orderData) => {
           : [],
         tip_amount: Math.max(0, Number(orderData.tipAmount ?? orderData.tip_amount ?? 0) || 0),
         total_price: orderData.totalPrice || 0,
-        status: 'Placed',
+        // STORE queue (pack hona baaki): delivery popup is par KABHI nahi —
+        // assign SIRF store ke "Mark as Packed" (status 'packed') par hota hai.
+        status: 'pending_assignment',
       }).select().single();
       if (!cloudError && cloudOrder) {
         // Backend bypassed hai to stock decrement bhi yahin (atomic RPC preferred).
@@ -349,7 +351,7 @@ export const createOrderApi = async (orderData) => {
       id: `local_${Date.now()}`,
       ...orderData,
       user_id: orderOwnerId,
-      status: 'Placed',
+      status: 'pending_assignment',
       created_at: new Date().toISOString(),
       source: 'local_fallback',
     };
@@ -599,9 +601,10 @@ const markOrderPackedDirect = async (orderId) => {
   }
   // Race-safe: agar (lost-response wale) backend request ne beech me assign kar
   // diya ho to status ko haath mat lagao — sirf fresh state wapas karo.
+  // SIRF store-queue se packed banao; packed-or-beyond ko regress mat karo.
   const alreadyAssigned = order.delivery_boy_id && String(order.delivery_boy_id).trim() !== '';
   let packed = order;
-  if (!alreadyAssigned && statusLower !== 'packed') {
+  if (!alreadyAssigned && ['placed', 'pending', 'pending_assignment'].includes(statusLower)) {
     const { data: updated, error: updateError } = await supabase
       .from('orders')
       .update({ status: 'packed' })

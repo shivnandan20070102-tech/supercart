@@ -268,11 +268,25 @@ $$;
 COMMENT ON FUNCTION public.auto_assign_delivery_partner() IS
 'Packed order INSERT par order-wale-store ka nearest FREE delivery partner auto-assign karta hai (PACKED-gate, geo-fallback random); partner ka Online/Offline status nahi badalta.';
 
--- 4. Trigger: har naye order par function chalao (UPDATE par nahi, taaki loop na bane)
+-- 4. Trigger: SIRF 'packed' INSERT par assign (store ne pack kiya hua order
+--    seedha DB me insert ho to backup path). 'pending_assignment' / 'Placed' /
+--    'pending' (store queue) par trigger FIRE HI NAHI hota — WHEN clause DB
+--    level par rokta hai (function ka early-RETURN uske upar second guard hai).
+--    Isliye naya order place hote hi delivery popup KABHI nahi khulta.
+--    Purane versions ke legacy trigger naam bhi drop karo taaki production me
+--    koi purana "order-create-par-assign" trigger zinda na bache.
 DROP TRIGGER IF EXISTS trg_auto_assign_delivery_partner ON public.orders;
+DROP TRIGGER IF EXISTS trg_assign_delivery_partner ON public.orders;
+DROP TRIGGER IF EXISTS trg_auto_assign_delivery ON public.orders;
+DROP TRIGGER IF EXISTS auto_assign_delivery_partner ON public.orders;
+DROP TRIGGER IF EXISTS on_order_created_assign_delivery ON public.orders;
+DROP TRIGGER IF EXISTS trg_delivery_auto_assign ON public.orders;
 CREATE TRIGGER trg_auto_assign_delivery_partner
     AFTER INSERT ON public.orders
-    FOR EACH ROW EXECUTE FUNCTION public.auto_assign_delivery_partner();
+    FOR EACH ROW
+    WHEN (LOWER(COALESCE(NEW.status, '')) = 'packed'
+      AND (NEW.delivery_boy_id IS NULL OR NEW.delivery_boy_id = ''))
+    EXECUTE FUNCTION public.auto_assign_delivery_partner();
 
 -- 5. AFTER UPDATE trigger: store ne PACKED mark kiya tab assign (UPDATE path).
 -- GAP FIX: upar wala trigger sirf AFTER INSERT hai. Normal flow me order
@@ -465,9 +479,18 @@ COMMENT ON FUNCTION public.auto_assign_delivery_partner_on_pack() IS
 'Store PACKED mark (UPDATE) par order-wale-store ka nearest FREE delivery partner auto-assign karta hai (verified YA approved, PACKED-gate, geo-fallback random); reject/timeout ke baad wapas packed hone par agle partner ko turant deta hai.';
 
 DROP TRIGGER IF EXISTS trg_auto_assign_delivery_on_pack ON public.orders;
+DROP TRIGGER IF EXISTS trg_assign_delivery_on_pack ON public.orders;
+DROP TRIGGER IF EXISTS on_order_packed_assign_delivery ON public.orders;
+-- WHEN clause: SIRF 'packed' banne wale unassigned transition par fire.
+-- Store manager "Mark as Packed" dabaye TABHI ye trigger chalta hai aur
+-- delivery partner ko 10-second Accept popup jata hai. Function ke andar
+-- wale gates (status check + already-assigned no-op) second guard hain.
 CREATE TRIGGER trg_auto_assign_delivery_on_pack
     AFTER UPDATE OF status ON public.orders
-    FOR EACH ROW EXECUTE FUNCTION public.auto_assign_delivery_partner_on_pack();
+    FOR EACH ROW
+    WHEN (LOWER(COALESCE(NEW.status, '')) = 'packed'
+      AND (NEW.delivery_boy_id IS NULL OR NEW.delivery_boy_id = ''))
+    EXECUTE FUNCTION public.auto_assign_delivery_partner_on_pack();
 
 -- ===================================================
 -- VERIFY (optional, RUN ke baad alag se chalao):
@@ -488,8 +511,18 @@ CREATE TRIGGER trg_auto_assign_delivery_on_pack
 -- -- UPDATE public.users SET verified = true, is_available = true
 -- -- WHERE id IN ('<partner-uuid-1>', '<partner-uuid-2>');
 --
--- -- Test order: insert karte hi delivery_boy_id + status='assigned' dikhna chahiye
--- -- INSERT INTO public.orders (order_items, shipping_address, total_price)
--- -- VALUES ('[{"name":"Test Milk","quantity":1,"price":34}]'::jsonb, '{"address":"Test"}'::jsonb, 34)
+-- -- FLOW TEST (Supabase SQL Editor me ek-ek karke chalao):
+-- -- 1. Naya order (store queue): delivery popup NAHI aana chahiye —
+-- --    delivery_boy_id NULL + status 'pending_assignment' rehna chahiye.
+-- -- INSERT INTO public.orders (order_items, shipping_address, total_price, status)
+-- -- VALUES ('[{"name":"Test Milk","quantity":1,"price":34}]'::jsonb, '{"address":"Test"}'::jsonb, 34, 'pending_assignment')
+-- -- RETURNING id, status, delivery_boy_id;
+-- -- 2. Store "Mark as Packed": TABHI assign hona chahiye (status 'assigned' +
+-- --    delivery_boy_id set + delivery partner ko popup).
+-- -- UPDATE public.orders SET status = 'packed' WHERE id = <TEST_ORDER_ID>
+-- -- RETURNING id, status, delivery_boy_id;
+-- -- 3. Direct packed insert (backup path): turant assign hona chahiye.
+-- -- INSERT INTO public.orders (order_items, shipping_address, total_price, status)
+-- -- VALUES ('[{"name":"Test Milk","quantity":1,"price":34}]'::jsonb, '{"address":"Test"}'::jsonb, 34, 'packed')
 -- -- RETURNING id, status, delivery_boy_id;
 -- ===================================================

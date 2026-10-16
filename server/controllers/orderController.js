@@ -759,9 +759,15 @@ export const markOrderPacked = async (req, res) => {
       });
     }
 
-    // 4. status='packed' (already packed ho to bhi aage assign attempt karo)
+    // 4. status='packed' — SIRF store-queue (placed/pending/pending_assignment)
+    // se packed banao. Already packed/assigned/accepted/... order ko HAATH MAT
+    // lagao (warna assigned -> packed regress ho jayega aur delivery state
+    // bigad jayegi). Already-assigned par niche assign attempt safe no-op hai.
+    const STORE_QUEUE = ['placed', 'pending', 'pending_assignment'];
+    const alreadyAssigned =
+      order.delivery_boy_id != null && String(order.delivery_boy_id).trim() !== '';
     let packed = order;
-    if (statusLower !== 'packed') {
+    if (!alreadyAssigned && STORE_QUEUE.includes(statusLower)) {
       const { data: updated, error: updateError } = await supabase
         .from('orders')
         .update({ status: 'packed' })

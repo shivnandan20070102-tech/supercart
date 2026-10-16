@@ -16,6 +16,16 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { getMyOrdersApi } from '../services/api';
+import { supabase } from '../config/supabase';
+
+// Jin status me partner ke paas order hai — list me naam dikhta hai, live map
+// sirf Order Detail page me (OrderDetail.jsx).
+const TRACKABLE_STATUSES = new Set(['assigned', 'accepted', 'picked_up', 'out_for_delivery']);
+const isTrackable = (order) => {
+  const boy = order?.delivery_boy_id;
+  if (boy == null || String(boy).trim() === '') return false;
+  return TRACKABLE_STATUSES.has(String(order?.status || '').toLowerCase());
+};
 import {
   arrivedInMinutes,
   formatOrderDateTime,
@@ -47,6 +57,7 @@ const OrderHistory = () => {
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [partnersById, setPartnersById] = useState(new Map());
   const [query, setQuery] = useState('');
   const [reorderId, setReorderId] = useState(null);
   const [ratedMap, setRatedMap] = useState(() => {
@@ -71,6 +82,24 @@ const OrderHistory = () => {
             (a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0),
           );
           setOrders(sorted);
+          // Trackable orders ke partner naam ek batch me (live map nahi —
+          // wo sirf Order Detail me khulta hai).
+          try {
+            const riderIds = [...new Set(
+              sorted.filter(isTrackable).map((o) => String(o.delivery_boy_id)),
+            )];
+            if (riderIds.length > 0) {
+              const { data: riders } = await supabase
+                .from('users')
+                .select('id, name')
+                .in('id', riderIds);
+              setPartnersById(new Map((riders || []).map((r) => [String(r.id), r.name || 'Delivery partner'])));
+            } else {
+              setPartnersById(new Map());
+            }
+          } catch {
+            setPartnersById(new Map());
+          }
         }
       } catch {
         setOrders([]);
@@ -224,6 +253,12 @@ const OrderHistory = () => {
                       <p className="mt-0.5 text-xs font-medium text-slate-500">
                         ₹{total} <span className="mx-1 text-slate-300">•</span> {date}
                       </p>
+                      {isTrackable(order) && (
+                        <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-700">
+                          <Truck className="h-3 w-3" />
+                          {partnersById.get(String(order.delivery_boy_id)) || 'Delivery partner assigned'} • Live
+                        </p>
+                      )}
                     </div>
                   </div>
                   <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-300" />

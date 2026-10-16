@@ -39,8 +39,11 @@ const prettifyStatus = (status) =>
   String(status || 'Placed').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 const isPackable = (order) => {
+  // SIRF store-queue (placed/pending_assignment) pack ho sakta hai.
+  // packed/assigned/accepted/... par button mat dikhao — warna assigned order
+  // wapas 'packed' regress ho jayega (delivery state bigad jayegi).
   const s = statusLower(order.status);
-  return s !== 'packed' && !CLOSED_STATUSES.has(s);
+  return NEED_PACK_STATUSES.has(s);
 };
 
 const formatDateTime = (value) => {
