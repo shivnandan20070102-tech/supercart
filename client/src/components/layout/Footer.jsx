@@ -88,10 +88,10 @@ const Footer = () => {
             <h5 className="font-bold text-white text-sm uppercase tracking-wider mb-4">Contact Us</h5>
             <div className="space-y-2 text-xs text-slate-400">
               <p className="flex items-center gap-2">
-                <Phone className="w-4 h-4 text-emerald-400" /> +91 98765 43210
+                <Phone className="w-4 h-4 text-emerald-400" /> +91 82781 30026
               </p>
               <p className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-emerald-400" /> support@supercart.com
+                <Mail className="w-4 h-4 text-emerald-400" /> supportsupercart@gmail.com
               </p>
               <p className="pt-2 text-slate-500">
                 Available 24x7 for all your grocery queries.

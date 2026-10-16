@@ -308,7 +308,7 @@ const Profile = () => {
             </div>
 
             <ProfileSection icon={HelpCircle} title="Need help?" description="We are available 24x7 for your grocery queries.">
-              <div className="space-y-3 text-sm"><a href="tel:+919876543210" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 font-bold text-slate-700 hover:bg-emerald-50"><Phone className="h-4 w-4 text-emerald-600" /> +91 98765 43210</a><a href="mailto:support@supercart.com" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 font-bold text-slate-700 hover:bg-emerald-50"><HelpCircle className="h-4 w-4 text-emerald-600" /> support@supercart.com</a></div>
+              <div className="space-y-3 text-sm"><a href="tel:+918278130026" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 font-bold text-slate-700 hover:bg-emerald-50"><Phone className="h-4 w-4 text-emerald-600" /> +91 82781 30026</a><a href="mailto:supportsupercart@gmail.com" className="flex items-center gap-3 rounded-xl bg-slate-50 p-3 font-bold text-slate-700 hover:bg-emerald-50"><HelpCircle className="h-4 w-4 text-emerald-600" /> supportsupercart@gmail.com</a></div>
             </ProfileSection>
 
             <ProfileSection icon={Info} title="About us" description="Fresh groceries, delivered to your door in minutes.">

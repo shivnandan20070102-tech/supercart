@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, CircleHelp, Phone, Siren, Truck } from 'lucide-react';
+import { ArrowLeft, CircleHelp, Mail, Phone, Siren, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const STRINGS = {
@@ -73,10 +73,16 @@ const DeliveryHelp = () => {
           </h2>
           <p className="mt-1 text-xs text-slate-400">{t.contactSub}</p>
           <a
-            href="tel:+919876543210"
+            href="tel:+918278130026"
             className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-400"
           >
-            <Phone className="h-4 w-4" /> {t.callSupport}: +91 98765 43210
+            <Phone className="h-4 w-4" /> {t.callSupport}: +91 82781 30026
+          </a>
+          <a
+            href="mailto:supportsupercart@gmail.com"
+            className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-black text-white hover:border-emerald-500"
+          >
+            <Mail className="h-4 w-4 text-emerald-400" /> supportsupercart@gmail.com
           </a>
           <p className="mt-4 flex items-start gap-2 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">
             <Siren className="h-4 w-4 shrink-0" /> {t.sosNote}

@@ -117,7 +117,7 @@ const PrivacyPolicy = () => {
                 'The right to access, correct, or update your data (via the Profile page or support).',
                 'The right to unsubscribe from promotional messages.',
                 'The right to request account deletion and data erasure.',
-                'For any request, write to support@supercart.com — we will respond within 7 working days.',
+                'For any request, write to supportsupercart@gmail.com — we will respond within 7 working days.',
               ]}
             />
           </Section>
@@ -143,9 +143,9 @@ const PrivacyPolicy = () => {
               <br />
               <span className="font-semibold text-slate-800">SuperCart Technologies Pvt Ltd</span>
               <br />
-              Email: <a href="mailto:support@supercart.com" className="text-emerald-600 font-medium hover:underline">support@supercart.com</a>
+              Email: <a href="mailto:supportsupercart@gmail.com" className="text-emerald-600 font-medium hover:underline">supportsupercart@gmail.com</a>
               <br />
-              Phone: +91 98765 43210 (available 24x7)
+              Phone: +91 82781 30026 (available 24x7)
             </p>
           </Section>
 

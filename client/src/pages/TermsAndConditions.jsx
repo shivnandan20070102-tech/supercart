@@ -66,7 +66,7 @@ const TermsAndConditions = () => {
               items={[
                 'You must be at least 18 years old to place an order.',
                 'The information provided at signup (name, mobile number, address) must be accurate and kept up to date.',
-                'You are responsible for keeping your account and OTP confidential. Report any unauthorized use immediately at support@supercart.com.',
+                'You are responsible for keeping your account and OTP confidential. Report any unauthorized use immediately at supportsupercart@gmail.com.',
                 'We may suspend or terminate accounts that provide false information or misuse the platform.',
               ]}
             />
@@ -98,7 +98,7 @@ const TermsAndConditions = () => {
           <Section no="5" title="Cancellation, Return & Refund">
             <BulletList
               items={[
-                'You can cancel your order before it is packed, via the app or by calling customer care (+91 98765 43210) — a full refund will be issued.',
+                'You can cancel your order before it is packed, via the app or by calling customer care (+91 82781 30026) — a full refund will be issued.',
                 'Cancellation is not possible once the order has been packed or dispatched.',
                 'For damaged, expired, or incorrect items, raise a complaint within 24 hours with a photo — we will provide a replacement or refund.',
                 '100% Quality Guarantee: if you are not satisfied, you get a no-questions-asked refund or replacement.',
@@ -146,9 +146,9 @@ const TermsAndConditions = () => {
               <br />
               <span className="font-semibold text-slate-800">SuperCart Technologies Pvt Ltd</span>
               <br />
-              Email: <a href="mailto:support@supercart.com" className="text-emerald-600 font-medium hover:underline">support@supercart.com</a>
+              Email: <a href="mailto:supportsupercart@gmail.com" className="text-emerald-600 font-medium hover:underline">supportsupercart@gmail.com</a>
               <br />
-              Phone: +91 98765 43210 (available 24x7)
+              Phone: +91 82781 30026 (available 24x7)
             </p>
           </Section>
 
