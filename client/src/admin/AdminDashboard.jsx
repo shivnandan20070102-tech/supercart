@@ -269,6 +269,18 @@ const AdminDashboard = () => {
         //    Rejected partner ko bhi allow — admin override sabse upar.
         //    FINAL FLOW: unassign hamesha 'pending_assignment' (store queue) me — NO AUTO-PACKED.
         //    store dobara Mark as Packed karega TABHI delivery assign hoga.
+        //    PACK-FIRST GATE (fallback me bhi): unpacked order (To-Pack queue) ko
+        //    seedha 'assigned' mat karo — pehle store se pack karwao. Bina is
+        //    guard ke Render cold-start window me naya order bina pack ke
+        //    seedha Assigned ho jata tha (To-Pack kabhi dikhta hi nahi tha).
+        if (next) {
+          const curKey = String(order?.status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+          if (['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', ''].includes(curKey)) {
+            notify('error', `Order #${id} abhi To-Pack me hai — pehle store se pack karwao, phir partner assign hoga.`);
+            await loadOrders();
+            return;
+          }
+        }
         const patch = next
           ? { delivery_boy_id: next, status: String(order?.status || '').toLowerCase() === 'delivered' ? order.status : 'assigned' }
           : { delivery_boy_id: null, status: 'pending_assignment' };
