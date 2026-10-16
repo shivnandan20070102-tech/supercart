@@ -592,7 +592,12 @@ const markOrderPackedDirect = async (orderId) => {
   }
   const { data: order, error: fetchError } = await supabase.from('orders').select('*').eq('id', orderId).single();
   if (fetchError || !order) throw new Error('Order not found');
-  if (order.store_id == null || !myStoreIds.includes(Number(order.store_id))) {
+  // TO-PACK FIX: store_id NULL order claim ho sakta hai (koi naya order atke nahi)
+  let claimedStoreId = null;
+  if (order.store_id == null) {
+    claimedStoreId = myStoreIds[0];
+    if (claimedStoreId == null) throw new Error('This order does not belong to your store');
+  } else if (!myStoreIds.includes(Number(order.store_id))) {
     throw new Error('This order does not belong to your store');
   }
   // PACK-FIRST: koi bhi unpacked variant (placed/pending/pending_assignment/
@@ -607,9 +612,10 @@ const markOrderPackedDirect = async (orderId) => {
   const alreadyAssigned = order.delivery_boy_id && String(order.delivery_boy_id).trim() !== '';
   let packed = order;
   if (!alreadyAssigned && ['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', ''].includes(statusKey)) {
+    const packUpdate = claimedStoreId != null ? { status: 'packed', store_id: claimedStoreId } : { status: 'packed' };
     const { data: updated, error: updateError } = await supabase
       .from('orders')
-      .update({ status: 'packed' })
+      .update(packUpdate)
       .eq('id', orderId)
       .select()
       .single();

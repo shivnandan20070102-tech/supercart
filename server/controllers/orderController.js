@@ -321,7 +321,39 @@ export const createOrder = async (req, res) => {
         message: 'Selected store is not available. Please refresh and try again.',
       });
     }
-    const finalStoreId = storeResolution.storeId;
+    let finalStoreId = storeResolution.storeId;
+    // TO-PACK FIX: legacy/infra case me store_id null na rakho — warna StoreDashboard
+    // (.in('store_id', ids)) me order kabhi dikhega hi nahi. Pehle claimed id (agar
+    // active hai) rakho, warna first ACTIVE store pakdo taaki har naya order kisi
+    // na kisi store ke To-Pack me jaye. OUT_OF_SERVICE/INVALID_STORE upar reject ho chuke.
+    if (finalStoreId == null) {
+      try {
+        const claimed = Number(rawStoreId);
+        if (Number.isFinite(claimed) && claimed > 0) {
+          const { data: claimedRow } = await supabase
+            .from('stores')
+            .select('id,is_active')
+            .eq('id', claimed)
+            .maybeSingle();
+          if (claimedRow && claimedRow.is_active !== false) finalStoreId = Number(claimedRow.id);
+        }
+      } catch { /* fallback neeche */ }
+    }
+    if (finalStoreId == null) {
+      try {
+        const { data: firstStore } = await supabase
+          .from('stores')
+          .select('id')
+          .eq('is_active', true)
+          .order('id', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (firstStore && firstStore.id != null) {
+          finalStoreId = Number(firstStore.id);
+          console.log(`📌 [store] legacy/null order -> fallback store #${finalStoreId} (To-Pack guarantee)`);
+        }
+      } catch { /* koi store na mile to null hi rahega, StoreDashboard null-pool dikhayega */ }
+    }
 
     // req.user.id (from token) has highest priority -> per-user isolation for ALL users
     let ownerId = req.user?.id || userId || user_id || null;
@@ -946,7 +978,16 @@ export const markOrderPacked = async (req, res) => {
     if (fetchError || !order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    if (order.store_id == null || !myStoreIds.includes(Number(order.store_id))) {
+    // TO-PACK FIX: store_id NULL (legacy/direct-insert) order kisi bhi linked store
+    // par claim ho sakta hai — taaki koi naya order To-Pack me atke nahi.
+    // Normal orders (store_id set) pehle jaisa strict check rahega.
+    let claimedStoreId = null;
+    if (order.store_id == null) {
+      claimedStoreId = myStoreIds[0];
+      if (claimedStoreId == null) {
+        return res.status(403).json({ success: false, message: 'This order does not belong to your store' });
+      }
+    } else if (!myStoreIds.includes(Number(order.store_id))) {
       return res.status(403).json({ success: false, message: 'This order does not belong to your store' });
     }
 
@@ -968,9 +1009,11 @@ export const markOrderPacked = async (req, res) => {
       order.delivery_boy_id != null && String(order.delivery_boy_id).trim() !== '';
     let packed = order;
     if (!alreadyAssigned && isStoreQueueStatus(order.status)) {
+      // Claim case me store_id bhi set karo taaki order is store ka ho jaye
+      const packUpdate = claimedStoreId != null ? { status: 'packed', store_id: claimedStoreId } : { status: 'packed' };
       const { data: updated, error: updateError } = await supabase
         .from('orders')
-        .update({ status: 'packed' })
+        .update(packUpdate)
         .eq('id', id)
         .select()
         .single();

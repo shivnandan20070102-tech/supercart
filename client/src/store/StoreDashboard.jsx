@@ -230,6 +230,8 @@ const StoreDashboard = () => {
   }, []);
 
   // Apne store(s) ke orders + customer/partner naam ek saath
+  // TO-PACK FIX: store_id NULL wale (purane/legacy) orders bhi lao taaki koi
+  // naya order gayab na ho — har naya order To-Pack me dikhna chahiye.
   const loadOrders = useCallback(async (ids) => {
     if (!ids || ids.length === 0) {
       setOrders([]);
@@ -243,7 +245,25 @@ const StoreDashboard = () => {
       .limit(100);
     if (ordersError) throw ordersError;
 
-    const rows = data || [];
+    // Unassigned pool (store_id null) — kisi bhi store ka manager dekh/pack kar sake
+    let nullRows = [];
+    try {
+      const res = await supabase
+        .from('orders')
+        .select('*')
+        .is('store_id', null)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (!res.error) nullRows = res.data || [];
+    } catch { /* null-pool optional — main list to aa hi gayi */ }
+
+    const merged = new Map();
+    for (const o of [...(data || []), ...nullRows]) {
+      if (o && o.id != null) merged.set(o.id, o);
+    }
+    const rows = [...merged.values()].sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    ).slice(0, 100);
     const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))];
     const partnerIds = [...new Set(rows.map((o) => o.delivery_boy_id).filter(Boolean).map(String))];
     const allIds = [...new Set([...userIds, ...partnerIds])];
@@ -410,6 +430,7 @@ const StoreDashboard = () => {
   }, []);
 
   // Realtime: apne store(s) ka naya/updated order turant list me
+  // + NULL-pool (store_id null) ka INSERT bhi — taaki koi naya order miss na ho.
   useEffect(() => {
     if (storeIds.length === 0) return undefined;
     const filter = storeIds.length === 1 ? `store_id=eq.${storeIds[0]}` : `store_id=in.(${storeIds.join(',')})`;
@@ -426,6 +447,17 @@ const StoreDashboard = () => {
           await loadOrders(storeIds);
         } catch (e) {
           setError(e.message || 'Refresh failed.');
+        }
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
+        // store_id null wala naya order (legacy/direct-insert) — filtered channel
+        // me nahi aata, isliye yahan pakdo taaki To-Pack me turant dikhe.
+        if (payload?.new?.store_id == null) {
+          playOrderSound();
+          showToast(`New order received! #${payload.new?.id}`);
+          try {
+            await loadOrders(storeIds);
+          } catch { /* next refresh sambhal lega */ }
         }
       })
       .subscribe();
