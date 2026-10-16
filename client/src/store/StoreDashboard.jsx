@@ -29,11 +29,25 @@ import { buildProductPayload, canManageProduct } from './storeProductAccess';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
 import InactivityGuard from '../components/InactivityGuard';
 
-const NEED_PACK_STATUSES = new Set(['placed', 'pending_assignment']);
-const CLOSED_STATUSES = new Set(['delivered', 'cancelled']);
-const PACKED_STATUSES = new Set(['packed', 'assigned', 'accepted', 'out_for_delivery', 'shipped']);
+// PACK-FIRST: jo bhi order aaye, kisi bhi store se — pehle To-Pack me aayega,
+// pack hoke hi aage badhega. Status key normalize (space/hyphen -> underscore,
+// lowercase) taaki 'Out for Delivery' / 'out-for-delivery' / 'out_for_delivery'
+// sab ek jaise match hon aur koi order tab se chhoote nahi.
+const normalizeStatusKey = (s) =>
+  String(s || 'placed').trim().toLowerCase().replace(/[\s-]+/g, '_');
+// Store queue (unpacked) — ye sab To-Pack me dikhenge, delivery ke liye NOT ready.
+const NEED_PACK_STATUSES = new Set([
+  'placed',
+  'pending',
+  'pending_assignment',
+  'processing',
+  'confirmed',
+  'created',
+]);
+const CLOSED_STATUSES = new Set(['delivered', 'cancelled', 'failed', 'completed']);
+const PACKED_STATUSES = new Set(['packed', 'assigned', 'accepted', 'picked_up', 'out_for_delivery', 'shipped']);
 
-const statusLower = (s) => String(s || 'placed').toLowerCase();
+const statusLower = (s) => normalizeStatusKey(s);
 
 const prettifyStatus = (status) =>
   String(status || 'Placed').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

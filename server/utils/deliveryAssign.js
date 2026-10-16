@@ -279,7 +279,9 @@ export const fetchAvailablePartners = async (supabase) => {
  * inhe kabhi assign mat karo (FINAL FLOW rule).
  */
 export const fetchPendingOrders = async (supabase, limit = 50) => {
-  const statuses = [...PACKED_WAITING_STATUSES];
+  // PostgREST `in` case-sensitive hai — 'packed'/'Packed'/'PACKED' sab lao,
+  // phir JS me case-insensitive filter (koi packed order miss na ho).
+  const statuses = [...PACKED_WAITING_STATUSES, 'Packed', 'PACKED'];
   try {
     const { data, error } = await supabase
       .from('orders')
@@ -294,7 +296,10 @@ export const fetchPendingOrders = async (supabase, limit = 50) => {
     }
     // delivery_boy_id null/'' wale hi sach me unassigned hain.
     // (Admin ne manual assign kiya ho to use dobara touch mat karo.)
-    return (data || []).filter(isUnassigned);
+    // PACK-FIRST: sirf packed (case-insensitive) hi delivery queue hai.
+    return (data || []).filter(
+      (o) => isUnassigned(o) && String(o.status || '').toLowerCase() === 'packed'
+    );
   } catch (e) {
     console.warn(`⚠️ [assign] pending orders fetch failed: ${e.message}`);
     return [];

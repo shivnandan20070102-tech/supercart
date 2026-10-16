@@ -157,6 +157,29 @@ export const sendDeliveredInvoiceEmail = async (orderId) => {
   }
 };
 
+// PACK-FIRST: jo bhi order aaye, pehle To-Pack me aayega, pack hoke hi aage badhega.
+const normalizeStatusKey = (s) =>
+  String(s || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+const STORE_QUEUE_SET = new Set([
+  'placed',
+  'pending',
+  'pending_assignment',
+  'processing',
+  'confirmed',
+  'created',
+  '',
+]);
+const isStoreQueueStatus = (s) => STORE_QUEUE_SET.has(normalizeStatusKey(s));
+// Store-queue se seedha aage wale statuson me jaana mana hai — pehle 'packed' hona chahiye.
+const FORWARD_AFTER_PACK = new Set([
+  'assigned',
+  'accepted',
+  'picked_up',
+  'out_for_delivery',
+  'shipped',
+  'delivered',
+]);
+
 // @desc    Order status update karo; delivered hote hi invoice email auto-bhejo
 // @route   PUT /api/orders/:id/status  { status }
 // @access  Private (delivery partner / store_manager / admin — RLS + ownership code me)
@@ -169,7 +192,17 @@ export const updateOrderStatus = async (req, res) => {
     const { data: order, error: fetchError } = await supabase.from('orders').select('*').eq('id', id).single();
     if (fetchError || !order) return res.status(404).json({ success: false, message: 'Order not found' });
 
-    const wasDelivered = String(order.status || '').toLowerCase() === 'delivered';
+    // PACK-FIRST GATE: unpacked order seedha assigned/accepted/picked_up/
+    // out_for_delivery/delivered nahi ho sakta — pehle store pack kare.
+    if (isStoreQueueStatus(order.status) && FORWARD_AFTER_PACK.has(normalizeStatusKey(nextStatus))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order not packed yet — store needs to pack first (To-Pack queue)',
+        code: 'NOT_PACKED_YET',
+      });
+    }
+
+    const wasDelivered = normalizeStatusKey(order.status) === 'delivered';
     const { data: updated, error: updateError } = await supabase
       .from('orders').update({ status: nextStatus }).eq('id', id).select().single();
     if (updateError) {
@@ -177,7 +210,7 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     let email = null;
-    if (!wasDelivered && String(nextStatus).toLowerCase() === 'delivered') {
+    if (!wasDelivered && normalizeStatusKey(nextStatus) === 'delivered') {
       email = await sendDeliveredInvoiceEmail(id); // awaited taaki test/admin ko result dikhe
     }
     return res.status(200).json({ success: true, message: 'Order status updated', data: updated, email });

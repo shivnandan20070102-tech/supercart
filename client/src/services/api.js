@@ -595,8 +595,10 @@ const markOrderPackedDirect = async (orderId) => {
   if (order.store_id == null || !myStoreIds.includes(Number(order.store_id))) {
     throw new Error('This order does not belong to your store');
   }
-  const statusLower = String(order.status || '').toLowerCase();
-  if (['delivered', 'cancelled'].includes(statusLower)) {
+  // PACK-FIRST: koi bhi unpacked variant (placed/pending/pending_assignment/
+  // processing/confirmed/created) To-Pack se pack ho sakta hai.
+  const statusKey = String(order.status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['delivered', 'cancelled'].includes(statusKey)) {
     throw new Error(`${order.status} order cannot be marked as packed`);
   }
   // Race-safe: agar (lost-response wale) backend request ne beech me assign kar
@@ -604,7 +606,7 @@ const markOrderPackedDirect = async (orderId) => {
   // SIRF store-queue se packed banao; packed-or-beyond ko regress mat karo.
   const alreadyAssigned = order.delivery_boy_id && String(order.delivery_boy_id).trim() !== '';
   let packed = order;
-  if (!alreadyAssigned && ['placed', 'pending', 'pending_assignment'].includes(statusLower)) {
+  if (!alreadyAssigned && ['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', ''].includes(statusKey)) {
     const { data: updated, error: updateError } = await supabase
       .from('orders')
       .update({ status: 'packed' })

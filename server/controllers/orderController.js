@@ -32,6 +32,28 @@ const ensureUserRow = async (userId, extra = {}) => {
   }
 };
 
+// PACK-FIRST FLOW (single source of truth):
+// Jo bhi order aaye, kisi bhi store se — pehle To-Pack (store queue) me aayega,
+// pack hone ke BAAD hi aage badhega (delivery assign / out-for-delivery / delivered).
+// - STORE_QUEUE (unpacked) = placed, pending, pending_assignment, processing,
+//   confirmed, created — sab To-Pack me dikhenge, delivery ke liye NOT ready.
+// - 'packed' (unassigned) = delivery queue (assign ke liye ready).
+// - Assign sirf 2 jagah se: store markOrderPacked (PACKED moment) aur
+//   30s worker / retry (sirf 'packed' queue).
+const normalizeStatusKey = (s) =>
+  String(s || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+// Koi bhi unpacked variant — ye sab To-Pack queue hai (pack hona baaki).
+const STORE_QUEUE_SET = new Set([
+  'placed',
+  'pending',
+  'pending_assignment',
+  'processing',
+  'confirmed',
+  'created',
+  '',
+]);
+const isStoreQueueStatus = (s) => STORE_QUEUE_SET.has(normalizeStatusKey(s));
+
 // Order insert ke turant baad assignment state resolve karo:
 // FINAL FLOW: Customer -> nearest store -> store PACKED kare TABHI delivery assign.
 // Isliye yahan kabhi delivery assign MAT karo — sirf status normalize karo.
@@ -389,6 +411,16 @@ export const acceptOrder = async (req, res) => {
       });
     }
 
+    // PACK-FIRST GATE: bina pack hue order accept nahi ho sakta.
+    // Jo bhi order aaye, pehle To-Pack me aayega, pack hoke hi aage badhega.
+    if (isStoreQueueStatus(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order not packed yet — store needs to pack first',
+        code: 'NOT_PACKED_YET',
+      });
+    }
+
     const { data: updated, error: updateError } = await supabase
       .from('orders')
       .update({
@@ -617,6 +649,16 @@ export const assignDeliveryPartner = async (req, res) => {
     }
 
     // ---- ASSIGN / CHANGE ----
+    // PACK-FIRST GATE: jo bhi order aaye, pehle To-Pack me aayega.
+    // Bina pack hue admin bhi delivery assign nahi kar sakta — pehle store
+    // Mark as Packed kare, TABHI aage badhega.
+    if (isStoreQueueStatus(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order not packed yet — store needs to pack first (To-Pack queue)',
+        code: 'NOT_PACKED_YET',
+      });
+    }
     if (newBoyId === prevBoyId) {
       return res.status(200).json({
         success: true,
@@ -751,7 +793,7 @@ export const markOrderPacked = async (req, res) => {
       return res.status(403).json({ success: false, message: 'This order does not belong to your store' });
     }
 
-    const statusLower = String(order.status || '').toLowerCase();
+    const statusLower = normalizeStatusKey(order.status);
     if (['delivered', 'cancelled'].includes(statusLower)) {
       return res.status(400).json({
         success: false,
@@ -759,15 +801,16 @@ export const markOrderPacked = async (req, res) => {
       });
     }
 
-    // 4. status='packed' — SIRF store-queue (placed/pending/pending_assignment)
-    // se packed banao. Already packed/assigned/accepted/... order ko HAATH MAT
+    // 4. status='packed' — SIRF store-queue (koi bhi unpacked variant:
+    // placed/pending/pending_assignment/processing/confirmed/created)
+    // se packed banao. Jo bhi order aaye, pehle To-Pack me aayega, pack hoke
+    // hi aage badhega. Already packed/assigned/accepted/... ko HAATH MAT
     // lagao (warna assigned -> packed regress ho jayega aur delivery state
     // bigad jayegi). Already-assigned par niche assign attempt safe no-op hai.
-    const STORE_QUEUE = ['placed', 'pending', 'pending_assignment'];
     const alreadyAssigned =
       order.delivery_boy_id != null && String(order.delivery_boy_id).trim() !== '';
     let packed = order;
-    if (!alreadyAssigned && STORE_QUEUE.includes(statusLower)) {
+    if (!alreadyAssigned && isStoreQueueStatus(order.status)) {
       const { data: updated, error: updateError } = await supabase
         .from('orders')
         .update({ status: 'packed' })

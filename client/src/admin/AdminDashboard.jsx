@@ -213,7 +213,22 @@ const AdminDashboard = () => {
   const editProduct = (product) => { setEditingProduct(product.id); setProductForm({ ...emptyProduct, ...product }); setImagePreview(product.image || ''); setImageFile(null); setProductModal(true); };
   const deleteProduct = async (product) => { if (!window.confirm(`Delete ${product.name}?`)) return; const { error } = await supabase.from('products').delete().eq('id', product.id); if (error) notify('error', error.message); else { notify('success', 'Product deleted.'); loadProducts(); } };
   const [invoiceId, setInvoiceId] = useState(null);
-  const updateStatus = async (id, status) => { const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) notify('error', error.message); else { notify('success', 'Order status updated.'); logAdminActivity({ actionType: 'order_status_changed', targetId: id, description: `Manually changed order #${id} status to ${status}` }); loadOrders(); if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(id); } };
+  // PACK-FIRST: jo bhi order aaye, pehle To-Pack me aayega, pack hoke hi aage badhega.
+  // Admin bhi unpacked order ko seedha assigned/accepted/picked_up/out_for_delivery/
+  // delivered nahi kar sakta — pehle store (ya yahan se) 'packed' karo.
+  const updateStatus = async (id, status) => {
+    try {
+      const cur = orders.find((o) => String(o.id) === String(id));
+      const curKey = String(cur?.status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+      const nextKey = String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+      const storeQueue = new Set(['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', '']);
+      const forwardAfterPack = new Set(['assigned', 'accepted', 'picked_up', 'out_for_delivery', 'shipped', 'delivered']);
+      if (storeQueue.has(curKey) && forwardAfterPack.has(nextKey)) {
+        notify('error', `Order #${id} abhi To-Pack me hai — pehle store se pack karwao, phir aage badhega.`);
+        return;
+      }
+    } catch { /* guard fail ho to backend/DB faisla karega */ }
+    const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) notify('error', error.message); else { notify('success', 'Order status updated.'); logAdminActivity({ actionType: 'order_status_changed', targetId: id, description: `Manually changed order #${id} status to ${status}` }); loadOrders(); if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(id); } };
   const handleInvoiceDownload = async (id) => { setInvoiceId(id); try { await downloadOrderInvoice(id); } catch (e) { notify('error', e?.message || 'Could not download invoice.'); } finally { setInvoiceId(null); } };
   const assignBoy = async (id, delivery_boy_id) => {
     const order = orders.find((item) => String(item.id) === String(id));

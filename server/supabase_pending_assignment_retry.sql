@@ -44,21 +44,20 @@ ALTER TABLE public.orders
     ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Placed';
 
 -- ===================================================
--- 1. BEFORE INSERT normalize: 'Placed'/'pending' + unassigned
---    -> 'pending_assignment' (taaki purana backend bhi requirement follow kare)
+-- 1. BEFORE INSERT normalize: koi bhi unpacked variant + unassigned
+--    -> 'pending_assignment' (PACK-FIRST: jo bhi order aaye, pehle To-Pack me)
+--    taaki purana backend / direct insert bhi requirement follow kare.
+--    Covers: Placed/placed, pending, processing, confirmed, created, NULL/''
 -- ===================================================
 CREATE OR REPLACE FUNCTION public.normalize_pending_status()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    -- Unassigned + koi bhi store-queue (unpacked) status -> pending_assignment.
+    -- LOWER() se case-insensitive (Placed/PLACED sab pakde jayenge).
     IF (NEW.delivery_boy_id IS NULL OR NEW.delivery_boy_id = '')
-       AND NEW.status IN ('Placed', 'pending') THEN
-        NEW.status := 'pending_assignment';
-    END IF;
-    -- delivery_boy_id ke bina aaya aur status NULL ho to bhi pending rakho
-    IF (NEW.delivery_boy_id IS NULL OR NEW.delivery_boy_id = '')
-       AND (NEW.status IS NULL OR NEW.status = '') THEN
+       AND LOWER(COALESCE(NEW.status, '')) IN ('placed', 'pending', 'processing', 'confirmed', 'created', '') THEN
         NEW.status := 'pending_assignment';
     END IF;
     RETURN NEW;
