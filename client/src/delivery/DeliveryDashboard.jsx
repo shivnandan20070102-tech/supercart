@@ -749,9 +749,9 @@ const DeliveryDashboard = () => {
   };
 
   // Reject → turant siren+countdown stop, self ko rejected_by me add, order
-  // wapas 'packed' (unassigned) taaki agle FREE partner ko jaye. Store ko
-  // dobara pack nahi karna padta (order pehle hi packed tha). Is partner par
-  // order assigned nahi rehta. NOTE: is_available ko haath nahi lagate.
+  // wapas 'pending_assignment' (store queue) taaki store dobara Pack kare
+  // TABHI agle FREE partner ko jaye. NO AUTO-PACKED — bina Pack ke packed nahi.
+  // Is partner par order assigned nahi rehta. NOTE: is_available ko haath nahi lagate.
   const rejectPopupOrder = async (order) => {
     if (!order || updatingId) return;
     stopDeliverySiren();
@@ -761,7 +761,7 @@ const DeliveryDashboard = () => {
       const updated = [...new Set([...current, String(user.id)])];
       await supabase
         .from('orders')
-        .update({ rejected_by: updated, delivery_boy_id: null, status: 'packed' })
+        .update({ rejected_by: updated, delivery_boy_id: null, status: 'pending_assignment' })
         .eq('id', order.id);
       try { await supabase.rpc('retry_pending_assignments'); } catch (e) { /* best-effort */ }
     } catch (e) { /* best-effort pass-on */ }
@@ -773,9 +773,9 @@ const DeliveryDashboard = () => {
   };
 
   // 10s timeout → siren+countdown stop, rejected_by me self add, order wapas
-  // 'packed' (unassigned), taaki auto-assign worker/trigger agle FREE partner
-  // ko de sake. Order is partner par stuck nahi rehta, store ko dobara pack
-  // nahi karna padta.
+  // 'pending_assignment' (store queue), taaki store dobara Pack kare TABHI
+  // auto-assign worker/trigger agle FREE partner ko de sake. NO AUTO-PACKED.
+  // Order is partner par stuck nahi rehta.
   // NOTE: is_available ko HAATH NAHI lagate — Online/Offline SIRF partner
   // ke apne toggle ya Admin ke toggle se badalta hai, kabhi auto nahi.
   const timeoutPopupOrder = async (order) => {
@@ -787,7 +787,7 @@ const DeliveryDashboard = () => {
       const updated = [...new Set([...current, String(user.id)])];
       await supabase
         .from('orders')
-        .update({ rejected_by: updated, delivery_boy_id: null, status: 'packed' })
+        .update({ rejected_by: updated, delivery_boy_id: null, status: 'pending_assignment' })
         .eq('id', order.id);
       // Turant retry: saare pending orders available partners me baanto.
       // Function na bana ho (migration pending) to silently skip — 30s worker backup hai.

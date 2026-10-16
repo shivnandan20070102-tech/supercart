@@ -583,10 +583,10 @@ export const assignDeliveryPartner = async (req, res) => {
     // NOTE: is_available ko HAATH NAHI lagate — Online/Offline SIRF partner
     // ke apne toggle ya Admin toggle se badalta hai, assign/unassign se nahi.
 
-    // ---- UNASSIGN: partner hatao, order wapas delivery queue me ----
-    // FINAL FLOW: order pehle hi PACKED tha, isliye 'packed' (unassigned) rakho
-    // taaki worker agle FREE partner ko de sake. 'pending_assignment' store
-    // queue hai — wahan bhejne par store ko dobara pack karna padta (galat).
+    // ---- UNASSIGN: partner hatao, order wapas store queue me ----
+    // NO AUTO-PACKED: bina store Pack kiye 'packed' mat banao.
+    // Isliye unassign par 'pending_assignment' rakho taaki store dobara
+    // Mark as Packed kare TABHI delivery assign ho.
     if (!newBoyId) {
       if (String(order.status || '').toLowerCase() === 'delivered') {
         return res.status(400).json({
@@ -596,7 +596,7 @@ export const assignDeliveryPartner = async (req, res) => {
       }
       const { data: updated, error: updateError } = await supabase
         .from('orders')
-        .update({ delivery_boy_id: null, status: 'packed' })
+        .update({ delivery_boy_id: null, status: 'pending_assignment' })
         .eq('id', id)
         .select()
         .single();
@@ -611,7 +611,7 @@ export const assignDeliveryPartner = async (req, res) => {
       // partner/Admin ne set kiya hai.
       return res.status(200).json({
         success: true,
-        message: 'Partner removed — order is back in the packed queue for auto-assign',
+        message: 'Partner removed — order is back in To-Pack queue, store needs to pack again',
         data: updated,
       });
     }

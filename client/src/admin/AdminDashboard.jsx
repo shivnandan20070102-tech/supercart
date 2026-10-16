@@ -252,11 +252,11 @@ const AdminDashboard = () => {
       } catch (apiError) {
         // 2. Fallback: backend down ho to direct Supabase (emergency path)
         //    Rejected partner ko bhi allow — admin override sabse upar.
-        //    FINAL FLOW: unassign hamesha 'packed' (delivery queue) me — store ko
-        //    dobara pack nahi karna padta; worker agle FREE partner ko dega.
+        //    FINAL FLOW: unassign hamesha 'pending_assignment' (store queue) me — NO AUTO-PACKED.
+        //    store dobara Mark as Packed karega TABHI delivery assign hoga.
         const patch = next
           ? { delivery_boy_id: next, status: String(order?.status || '').toLowerCase() === 'delivered' ? order.status : 'assigned' }
-          : { delivery_boy_id: null, status: 'packed' };
+          : { delivery_boy_id: null, status: 'pending_assignment' };
         if (next && Array.isArray(order?.rejected_by)) {
           patch.rejected_by = order.rejected_by.filter((r) => String(r) !== String(next));
         }
@@ -264,7 +264,7 @@ const AdminDashboard = () => {
         if (error) throw error;
         // NOTE: is_available ko HAATH NAHI lagate — Online/Offline SIRF neeche
         // wale Admin toggle ya partner ke apne toggle se badalta hai.
-        notify('success', next ? 'Delivery partner updated (manual override).' : 'Partner removed - order moved to packed queue.');
+        notify('success', next ? 'Delivery partner updated (manual override).' : 'Partner removed - order moved back to To-Pack (store needs to pack again).');
         const fallbackBoy = next ? deliveryBoys.find((b) => String(b.id) === next) : null;
         const fallbackLabel = fallbackBoy ? (fallbackBoy.name || fallbackBoy.email || next) : next;
         logAdminActivity({
