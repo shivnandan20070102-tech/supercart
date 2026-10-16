@@ -113,9 +113,9 @@ app.post('/orders', optionalAuth, orderLimiter, createOrder);
 // Complaints alias: 5/hour/User.
 app.post('/complaints', protect, complaintLimiter, submitComplaint);
 // Alias for old frontend (frontend calls /orders/myorders, new standard is /api/orders/myorders)
-// No behaviour change for any user - both URLs return same per-user filtered orders
-app.get('/orders/myorders', generalLimiter, getMyOrders);
-app.get('/orders/:id', generalLimiter, getOrderById);
+// SECURITY FIX: protect lagaya taaki bina login koi ?userId se dusre ka data na dekhe
+app.get('/orders/myorders', protect, generalLimiter, getMyOrders);
+app.get('/orders/:id', protect, generalLimiter, getOrderById);
 // Alias: admin manual override (PUT /api/orders/:id/assign) — trusted -> loose
 app.put('/orders/:id/assign', protect, adminLooseLimiter, assignDeliveryPartner);
 // Alias: store manager pack (PUT /api/orders/:id/pack) — trusted -> loose

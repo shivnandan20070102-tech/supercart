@@ -158,7 +158,7 @@ export const createOrder = async (req, res) => {
       store_id,
     } = req.body || {};
 
-    const finalItems = orderItems || order_items || items || [];
+    let finalItems = orderItems || order_items || items || [];
     if (!finalItems || finalItems.length === 0) {
       return res.status(400).json({
         success: false,
@@ -168,11 +168,121 @@ export const createOrder = async (req, res) => {
 
     const finalShipping = shippingAddress || shipping_address || shippingaddress || {};
     const finalPaymentMethod = paymentMethod || payment_method || 'Cash On Delivery';
-    const finalItemsPrice = itemsPrice ?? items_price ?? 0;
-    const finalDeliveryFee = deliveryFee ?? delivery_fee ?? 0;
-    const finalCouponDiscount = couponDiscount ?? coupon_discount ?? 0;
-    const finalCouponCode = String(couponCode || coupon_code || '').trim().toUpperCase() || null;
-    const finalTotalPrice = totalPrice ?? total_price ?? 0;
+    // CLIENT values — sirf fallback, trust nahi (price-tamper fix, genuine total same rahega)
+    const clientItemsPrice = Number(itemsPrice ?? items_price ?? 0) || 0;
+    const clientDeliveryFee = Number(deliveryFee ?? delivery_fee ?? 0) || 0;
+    const clientCouponDiscount = Number(couponDiscount ?? coupon_discount ?? 0) || 0;
+    const clientCouponCode = String(couponCode || coupon_code || '').trim().toUpperCase() || null;
+    const clientTotalPrice = Number(totalPrice ?? total_price ?? 0) || 0;
+    const clientTip = Math.max(0, Number(tipAmount ?? tip_amount ?? 0) || 0);
+
+    // SERVER-AUTHORITATIVE PRICING: DB se real price, coupon DB se verify,
+    // delivery rule (0 ya 499+ par FREE warna 40), total server banayega.
+    let finalItemsPrice = Math.max(0, clientItemsPrice);
+    let finalDeliveryFee = Math.max(0, clientDeliveryFee);
+    let finalCouponDiscount = Math.max(0, clientCouponDiscount);
+    let finalCouponCode = clientCouponCode;
+    let finalTotalPrice = Math.max(0, clientTotalPrice);
+    let finalTipAmount = Math.min(500, clientTip);
+    try {
+      // 1. DB se real prices — kam-se-kam 1 match mila to server sum authoritative
+      const toQty = (v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : 0;
+      };
+      const toDbId = (v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : null;
+      };
+      const ids = [
+        ...new Set(
+          (Array.isArray(finalItems) ? finalItems : [])
+            .map((it) => toDbId(it?.productId ?? it?.product_id ?? it?.id))
+            .filter((n) => n != null)
+        ),
+      ];
+      const priceById = new Map();
+      if (ids.length > 0) {
+        const { data: rows } = await supabase.from('products').select('id,price').in('id', ids);
+        for (const r of rows || []) {
+          const p = Number(r?.price);
+          if (Number.isFinite(p) && p >= 0) priceById.set(Number(r.id), p);
+        }
+      }
+      if (priceById.size > 0) {
+        let sum = 0;
+        let covered = 0;
+        finalItems = (Array.isArray(finalItems) ? finalItems : []).map((it) => {
+          const qty = toQty(it?.quantity ?? it?.qty ?? 1) || 1;
+          const dbId = toDbId(it?.productId ?? it?.product_id ?? it?.id);
+          const dbPrice = dbId != null ? priceById.get(dbId) : undefined;
+          if (dbPrice != null) {
+            covered += 1;
+            sum += dbPrice * qty;
+            return { ...it, price: dbPrice };
+          }
+          sum += (Number(it?.price) || 0) * qty;
+          return it;
+        });
+        if (covered > 0) {
+          finalItemsPrice = Math.round(sum * 100) / 100;
+          // Delivery rule client CartContext jaisa — tampered fee overwrite
+          finalDeliveryFee = finalItemsPrice === 0 || finalItemsPrice > 499 ? 0 : 40;
+        }
+      }
+      // 2. Coupon DB se verify — invalid ho to discount 0 (paisa nahi dubega)
+      if (finalCouponCode) {
+        try {
+          const { data: c } = await supabase
+            .from('coupons')
+            .select('code,discount_type,discount_value,min_order_amount,expiry_date,is_active,usage_limit,used_count')
+            .eq('code', finalCouponCode)
+            .maybeSingle();
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const invalid =
+            !c ||
+            c.is_active === false ||
+            (c.expiry_date && new Date(c.expiry_date) < today) ||
+            Number(c.min_order_amount || 0) > finalItemsPrice ||
+            (c.usage_limit != null && Number(c.used_count || 0) >= Number(c.usage_limit));
+          if (invalid) {
+            finalCouponDiscount = 0;
+            finalCouponCode = null;
+          } else {
+            let allowed = 0;
+            if (String(c.discount_type || '').toLowerCase() === 'flat') {
+              allowed = Number(c.discount_value || 0);
+            } else {
+              allowed = (finalItemsPrice * Number(c.discount_value || 0)) / 100;
+            }
+            allowed = Math.round(Math.max(0, allowed) * 100) / 100;
+            finalCouponDiscount = Math.min(allowed, finalItemsPrice);
+          }
+        } catch {
+          // coupons table missing ho to order na toote — client discount cap karke
+          finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
+        }
+      } else {
+        finalCouponDiscount = 0;
+      }
+      // 3. Total authoritative — client total overwrite
+      finalTotalPrice =
+        Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100;
+      finalTotalPrice = Math.max(0, finalTotalPrice);
+    } catch {
+      // Pricing me kuch fail ho to safe capped fallback — order kabhi na toote
+      finalItemsPrice = Math.max(0, clientItemsPrice);
+      finalDeliveryFee = finalItemsPrice === 0 || finalItemsPrice > 499 ? 0 : 40;
+      finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
+      finalCouponCode = clientCouponCode;
+      finalTipAmount = Math.min(500, clientTip);
+      finalTotalPrice =
+        Math.max(
+          0,
+          Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100
+        );
+    }
 
     // delivery_instructions: array, JSON string ya single string — sabko TEXT[] me normalize karo
     const rawInstructions = deliveryInstructions ?? delivery_instructions ?? [];
@@ -189,7 +299,6 @@ export const createOrder = async (req, res) => {
         finalInstructions = [rawInstructions.trim()];
       }
     }
-    const finalTipAmount = Math.max(0, Number(tipAmount ?? tip_amount ?? 0) || 0);
     // Multi-store: order ka store_id WAHI jo nearest ACTIVE store hai.
     // Client fresh-resolve karke bhejta hai, authoritative check yahan hota hai —
     // stale/tampered id ya missing id server theek kar deta hai.
@@ -344,7 +453,7 @@ export const createOrder = async (req, res) => {
 
 // @desc    Get single order by ID
 // @route   GET /api/orders/:id
-// @access  Private
+// @access  Private (SECURITY FIX: owner / admin / store_manager / assigned partner only)
 export const getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -360,6 +469,39 @@ export const getOrderById = async (req, res) => {
         success: false,
         message: 'Order not found',
       });
+    }
+
+    // Per-order access check — bina haq ke koi dusre ka order na dekhe (data leak fix).
+    // Genuine flows nahi rukenge: owner / admin / assigned partner / apne store ka manager pass.
+    const uid = req.user?.id ? String(req.user.id) : '';
+    let role = '';
+    try {
+      if (uid) {
+        const { data: me } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
+        role = String(me?.role || '').toLowerCase();
+      }
+    } catch { /* role unknown — owner/partner check neeche */ }
+    if (role !== 'admin') {
+      const isOwner = order.user_id && uid && String(order.user_id) === uid;
+      const isPartner =
+        order.delivery_boy_id && uid && String(order.delivery_boy_id) === uid;
+      let isStoreManager = false;
+      if (!isOwner && !isPartner && role === 'store_manager' && order.store_id != null && uid) {
+        try {
+          const { data: links } = await supabase
+            .from('store_staff')
+            .select('store_id')
+            .eq('user_id', uid);
+          const ids = (links || []).map((r) => Number(r.store_id));
+          if (ids.includes(Number(order.store_id))) isStoreManager = true;
+        } catch { /* deny */ }
+      }
+      if (!isOwner && !isPartner && !isStoreManager) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this order',
+        });
+      }
     }
 
     res.status(200).json({
@@ -515,10 +657,25 @@ export const rejectOrder = async (req, res) => {
 
 // @desc    Get logged in user orders
 // @route   GET /api/orders/myorders
-// @access  Private
+// @access  Private (SECURITY FIX: ?userId spoof block — sirf apna data)
 export const getMyOrders = async (req, res) => {
   try {
-    const userId = req.user?.id || req.query.userId;
+    // Logged-in user ka id hi truth hai. ?userId sirf admin ke liye allow.
+    let userId = req.user?.id || null;
+    const requested = req.query.userId || req.query.user_id;
+    if (requested && String(requested).trim() !== '' && req.user?.id) {
+      try {
+        const { data: me } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', req.user.id)
+          .maybeSingle();
+        if (String(me?.role || '').toLowerCase() === 'admin') {
+          userId = String(requested).trim();
+        }
+        // non-admin ka requested ignore — khud ka hi milega, data leak nahi
+      } catch { /* ignore — khud ka id rahega */ }
+    }
 
     let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
 
