@@ -11,6 +11,7 @@ import OrderDetail from './pages/OrderDetail';
 import TermsAndConditions from './pages/TermsAndConditions';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import FloatingCart from './components/layout/FloatingCart';
+import AutoLocationSetup from './components/AutoLocationSetup';
 import { CartProvider } from './context/CartContext';
 import { AuthProvider } from './context/AuthContext';
 import { WishlistProvider } from './context/WishlistContext';
@@ -68,6 +69,9 @@ function ShopLayout({ searchQuery, setSearchQuery, selectedCategory, setSelected
 
   return (
     <>
+      {/* Naya user: GPS se delivery address auto-set + location-off notification
+          (admin/delivery/store panels isme nahi hain — sirf customer pages) */}
+      <AutoLocationSetup />
       {!isProfile && (
         <QuickCommerceHeader
           searchQuery={searchQuery}

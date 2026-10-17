@@ -8,6 +8,7 @@ import {
   readStoredNearest,
   saveNearestStore,
 } from '../services/nearestStore';
+import { ADDRESS_CHANGED_EVENT } from '../hooks/useDeliveryAddress';
 
 const StoreContext = createContext(null);
 
@@ -57,10 +58,13 @@ export const StoreProvider = ({ children }) => {
       setUserCoords((prev) => (prev?.lat === coords.lat && prev?.lng === coords.lng ? prev : coords));
     };
     window.addEventListener('storage', syncFromStorage);
-    // Same-tab save par 'storage' event fire nahi hota — chhota poll rakho
+    // Same-tab save par 'storage' event fire nahi hota — custom event (auto-location /
+    // picker save) par turant sync, aur backup ke liye chhota poll.
+    window.addEventListener(ADDRESS_CHANGED_EVENT, syncFromStorage);
     const timer = window.setInterval(syncFromStorage, 2000);
     return () => {
       window.removeEventListener('storage', syncFromStorage);
+      window.removeEventListener(ADDRESS_CHANGED_EVENT, syncFromStorage);
       window.clearInterval(timer);
     };
   }, []);
