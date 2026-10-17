@@ -38,6 +38,8 @@ export const buildProductPayload = (form, storeId) => {
   const originalPrice = Number.isFinite(originalRaw) && originalRaw > 0 ? originalRaw : price;
   const sq = Number(form?.stock_quantity);
   const th = Number(form?.low_stock_threshold);
+  // Barcode verification: scan/manual number (khali ho to null)
+  const barcode = String(form?.barcode_number || '').trim();
   return {
     payload: {
       name,
@@ -50,6 +52,7 @@ export const buildProductPayload = (form, storeId) => {
       store_id: sid,
       stock_quantity: Number.isFinite(sq) ? Math.max(0, Math.floor(sq)) : 0,
       low_stock_threshold: Number.isFinite(th) ? Math.max(0, Math.floor(th)) : 5,
+      barcode_number: barcode || null,
     },
   };
 };
