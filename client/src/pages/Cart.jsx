@@ -29,6 +29,7 @@ import { findNearestStore } from '../services/nearestStore';
 import LoadingState from '../components/layout/LoadingState';
 import { useStore } from '../context/StoreContext';
 import useDeliveryAddress from '../hooks/useDeliveryAddress';
+import { SERVICE_RADIUS_KM, STORE_LOCATION, haversineKm, calculateDeliveryCharge, isFreeDelivery, FREE_DELIVERY_THRESHOLD } from '../config/store';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
 
 // Delivery partner ke liye instructions — DB me delivery_instructions TEXT[] me save hote hain
@@ -53,11 +54,9 @@ const Cart = () => {
     subtotal,
     originalSubtotal,
     savings,
-    deliveryFee,
-    grandTotal,
   } = useCart();
   const { user } = useAuth();
-  const { isOnline, serviceable, nearestStore } = useStore();
+  const { isOnline, serviceable, nearestStore, nearestLoading } = useStore();
   const { savedAddress } = useDeliveryAddress();
 
   const [couponCode, setCouponCode] = useState('');
@@ -81,6 +80,13 @@ const Cart = () => {
   // fetch fail ho to checkout server-side stock check sambhal lega.
   const [stockMap, setStockMap] = useState(() => new Map());
 
+  // Distance-based delivery charge (₹10/KM, min ₹10, ₹399+ FREE, max 5 KM).
+  // Recalculated whenever the saved delivery address / nearest store / cart total changes.
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState(null);
+  const [deliveryCharge, setDeliveryCharge] = useState(0);
+  const [deliveryCalculating, setDeliveryCalculating] = useState(true);
+  const [deliveryError, setDeliveryError] = useState('');
+
   useEffect(() => {
     let cancelled = false;
     const ids = (cartItems || []).map((i) => i?.id).filter((v) => v != null);
@@ -101,6 +107,75 @@ const Cart = () => {
       cancelled = true;
     };
   }, [cartItems]);
+
+  // Recalculate delivery distance + charge whenever the saved delivery address or
+  // nearest store changes (address picker in header updates savedAddress, StoreContext
+  // re-resolves nearestStore from the new coords). Server re-verifies on order create.
+  useEffect(() => {
+    let cancelled = false;
+    const numOrNull = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : null);
+
+    const calc = async () => {
+      setDeliveryCalculating(true);
+      setDeliveryError('');
+      const ship = savedAddress || {};
+      const shipLat = numOrNull(ship.lat) ?? numOrNull(ship.latitude);
+      const shipLng = numOrNull(ship.lng) ?? numOrNull(ship.longitude);
+      const hasCoords = shipLat != null && shipLng != null;
+
+      // Jab tak StoreContext nayi address coords se nearest store resolve nahi kar
+      // leta, thoda rukna hai — warna galat "invalid address" error flash hoga.
+      // Calculating state true hi rahega; nearestLoading false hote hi ye effect
+      // dobara chalega aur final charge compute karega.
+      if (hasCoords && nearestLoading) {
+        return;
+      }
+
+      try {
+        let distanceKm = null;
+        if (nearestStore?.distanceKm != null && !Number.isNaN(nearestStore.distanceKm)) {
+          // Server-computed distance (RPC / Haversine) from delivery address to nearest store.
+          distanceKm = Number(nearestStore.distanceKm);
+        } else if (hasCoords && nearestStore?.latitude != null && nearestStore?.longitude != null) {
+          distanceKm = haversineKm(
+            { lat: shipLat, lng: shipLng },
+            { lat: Number(nearestStore.latitude), lng: Number(nearestStore.longitude) },
+          );
+        } else if (hasCoords) {
+          distanceKm = haversineKm({ lat: shipLat, lng: shipLng }, STORE_LOCATION);
+        }
+
+        if (cancelled) return;
+        setDeliveryDistanceKm(distanceKm);
+
+        if (distanceKm == null || Number.isNaN(distanceKm)) {
+          setDeliveryCharge(0);
+          setDeliveryError('Please set a valid delivery address with coordinates.');
+        } else if (distanceKm > SERVICE_RADIUS_KM) {
+          setDeliveryCharge(null);
+          setDeliveryError(`Delivery unavailable — ${distanceKm.toFixed(1)} KM away (maximum 5 KM).`);
+        } else if (isFreeDelivery(subtotal)) {
+          // ₹399+ order — poori delivery FREE (distance kuch bhi ho)
+          setDeliveryCharge(0);
+        } else {
+          // ₹10/KM, nearest rupee, minimum ₹10
+          setDeliveryCharge(calculateDeliveryCharge(distanceKm) ?? 0);
+        }
+      } catch {
+        if (cancelled) return;
+        setDeliveryCharge(0);
+        setDeliveryDistanceKm(null);
+        setDeliveryError('Could not calculate delivery distance.');
+      } finally {
+        if (!cancelled) setDeliveryCalculating(false);
+      }
+    };
+
+    calc();
+    return () => {
+      cancelled = true;
+    };
+  }, [savedAddress, nearestStore, nearestLoading, subtotal]);
 
   // Order success ("Thank you") same /cart page par conditional render hota hai,
   // isliye App wala ScrollToTop (pathname change) trigger nahi hota.
@@ -202,7 +277,7 @@ const Cart = () => {
   // If cart shrinks below the coupon's minimum, discount pauses until amount recovers
   const couponMinOk = !couponApplied || !appliedCoupon || subtotal >= Number(appliedCoupon.min_order_amount || 0);
   const couponDiscount = couponApplied && appliedCoupon && couponMinOk ? calcCouponDiscount(appliedCoupon, subtotal) : 0;
-  const finalPayable = Math.max(0, grandTotal - couponDiscount + tipAmount);
+  const finalPayable = Math.max(0, subtotal + (deliveryCharge || 0) - couponDiscount + tipAmount);
 
   useEffect(() => {
     if (!paymentPending) return undefined;
@@ -291,7 +366,7 @@ const Cart = () => {
         },
         paymentMethod,
         itemsPrice: subtotal,
-        deliveryFee,
+        deliveryFee: deliveryCharge || 0,
         couponDiscount,
         couponCode: couponApplied && appliedCoupon ? appliedCoupon.code : null,
         deliveryInstructions,
@@ -743,23 +818,34 @@ const Cart = () => {
                 )}
 
                 <div className="flex justify-between">
-                  <span>Delivery Partner Fee</span>
-                  {deliveryFee === 0 ? (
+                  <span>
+                    Delivery Partner Fee
+                    {deliveryDistanceKm != null && !deliveryCalculating && !deliveryError && (
+                      <span className="ml-1 text-[10px] font-medium text-slate-400">
+                        (Distance: {deliveryDistanceKm.toFixed(1)} km)
+                      </span>
+                    )}
+                  </span>
+                  {deliveryCalculating ? (
+                    <span className="font-semibold text-slate-800">Calculating…</span>
+                  ) : deliveryCharge === null ? (
+                    <span className="font-semibold text-rose-600">Unavailable</span>
+                  ) : deliveryCharge === 0 ? (
                     <span className="text-emerald-600 font-bold uppercase">FREE</span>
                   ) : (
-                    <span className="font-semibold text-slate-800">₹{deliveryFee}</span>
+                    <span className="font-semibold text-slate-800">₹{deliveryCharge}</span>
                   )}
                 </div>
+                {!deliveryCalculating && !deliveryError && subtotal > 0 && !isFreeDelivery(subtotal) && (
+                  <p className="text-[10px] font-semibold text-emerald-600">
+                    Add ₹{Math.max(0, Math.ceil(FREE_DELIVERY_THRESHOLD - subtotal))} more for FREE delivery!
+                  </p>
+                )}
                 {tipAmount > 0 && (
                   <div className="flex justify-between text-emerald-600 font-semibold">
                     <span>Delivery Partner Tip</span>
                     <span>+ ₹{tipAmount}</span>
                   </div>
-                )}
-                {deliveryFee > 0 && (
-                  <p className="text-[10px] text-slate-400">
-                    Add ₹{499 - subtotal} more for FREE delivery!
-                  </p>
                 )}
               </div>
 
@@ -806,10 +892,10 @@ const Cart = () => {
 
               <button
                 onClick={handleCheckout}
-                disabled={!isOnline || serviceable === false || isCheckingOut || paymentPending}
+                disabled={!isOnline || serviceable === false || isCheckingOut || paymentPending || deliveryCalculating || Boolean(deliveryError)}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 py-4 text-sm font-black text-white transition shadow-lg shadow-emerald-600/25 hover:bg-emerald-700 active:scale-98 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none"
               >
-                <span>{!isOnline ? 'Store is currently closed' : serviceable === false ? 'Service not available in your area' : isCheckingOut ? 'Saving your order...' : `Proceed to Pay (₹${finalPayable})`}</span>
+                <span>{!isOnline ? 'Store is currently closed' : serviceable === false ? 'Service not available in your area' : isCheckingOut ? 'Saving your order...' : deliveryCalculating ? 'Calculating delivery fee…' : `Proceed to Pay (₹${finalPayable})`}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -857,6 +943,15 @@ const Cart = () => {
               )}
 
               {isCheckingOut && <LoadingState label="Saving your order securely..." />}
+
+              {deliveryError && (
+                <p
+                  role="alert"
+                  className="text-xs font-semibold text-center rounded-xl p-2.5 bg-rose-50 text-rose-800 border border-rose-200"
+                >
+                  {deliveryError}
+                </p>
+              )}
 
               {checkoutError && (
                 <p

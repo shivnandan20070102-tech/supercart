@@ -6,6 +6,27 @@ export const DELIVERY_ETA_MINUTES = 10;
 // store na ho to area unserviceable mana jata hai (sirf browsing, no ordering)
 export const SERVICE_RADIUS_KM = 5;
 
+// Distance-based delivery pricing (server bhi yahi rule lagata hai):
+// - ₹10 per KM (nearest rupee tak round: 2.3 KM -> ₹23)
+// - minimum ₹10 (bahut chhoti distance par bhi)
+// - ₹399+ ke order par FREE delivery
+export const DELIVERY_RATE_PER_KM = 10;
+export const MIN_DELIVERY_CHARGE = 10;
+export const FREE_DELIVERY_THRESHOLD = 399;
+
+// Delivery charge = Distance (KM) x ₹10, nearest rupee tak rounded, min ₹10.
+// null = invalid / unserviceable distance (service radius ke bahar).
+export const calculateDeliveryCharge = (distanceKm) => {
+  if (distanceKm == null || Number.isNaN(distanceKm) || distanceKm < 0) return null;
+  if (distanceKm > SERVICE_RADIUS_KM) return null;
+  const raw = Math.round(distanceKm * DELIVERY_RATE_PER_KM);
+  if (raw <= 0) return 0;
+  return Math.max(MIN_DELIVERY_CHARGE, raw);
+};
+
+// ₹399+ (items price) par delivery FREE — coupon discount isme count nahi hota.
+export const isFreeDelivery = (itemsPrice) => Number(itemsPrice) >= FREE_DELIVERY_THRESHOLD;
+
 // Store / dark-store coordinates (Sector 62, Noida)
 export const STORE_LOCATION = {
   lat: 28.6279,

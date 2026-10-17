@@ -36,7 +36,7 @@ const Navbar = ({ searchQuery, setSearchQuery }) => {
       {/* Top micro banner */}
       <div className="bg-emerald-600 text-white text-xs font-medium py-1.5 px-4 text-center flex items-center justify-center gap-2">
         <Zap className="w-3.5 h-3.5 animate-pulse text-amber-300" />
-        <span>⚡ Superfast Grocery Delivery in <b>10-15 minutes</b> | Free delivery on orders above ₹499!</span>
+        <span>⚡ Superfast Grocery Delivery in <b>10-15 minutes</b> | Free delivery on orders above ₹399!</span>
       </div>
 
       {/* Main Navbar */}

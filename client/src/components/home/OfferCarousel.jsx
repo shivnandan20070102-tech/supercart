@@ -104,7 +104,7 @@ const OfferCarousel = () => {
                 <Truck className="h-6 w-6 text-amber-300" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl font-black tracking-tight sm:text-2xl">Free delivery over ₹499</p>
+                <p className="text-xl font-black tracking-tight sm:text-2xl">Free delivery over ₹399</p>
                 <p className="mt-0.5 truncate text-xs text-emerald-50">
                   No minimum order • 100% quality checked
                 </p>

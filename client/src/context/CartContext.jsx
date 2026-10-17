@@ -83,8 +83,9 @@ export const CartProvider = ({ children }) => {
   );
 
   const savings = originalSubtotal - subtotal;
-  const deliveryFee = subtotal > 499 || subtotal === 0 ? 0 : 40;
-  const grandTotal = subtotal + deliveryFee;
+  // Delivery fee ab distance-based hai (₹10/KM, min ₹10, ₹399+ FREE) — checkout
+  // page (Cart.jsx) address coords se live calculate karta hai. Context me flat
+  // fee rakhna misleading tha, isliye hata diya.
 
   return (
     <CartContext.Provider
@@ -98,8 +99,6 @@ export const CartProvider = ({ children }) => {
         subtotal,
         originalSubtotal,
         savings,
-        deliveryFee,
-        grandTotal,
       }}
     >
       {children}

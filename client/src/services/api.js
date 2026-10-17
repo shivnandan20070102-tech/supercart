@@ -2,6 +2,7 @@ import { MOCK_PRODUCTS } from '../data/mockGroceryData';
 import { supabase } from '../config/supabase';
 import { findNearestStore } from './nearestStore';
 import { decrementStockDirect } from './stock';
+import { calculateDeliveryCharge, isFreeDelivery } from '../config/store';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
@@ -276,6 +277,7 @@ export const createOrderApi = async (orderData) => {
       // claimed storeId par bharosa MAT karo (stale/tampered ho sakta hai).
       // Actual delivery coords se FRESH nearest nikalo (wahi min-distance logic).
       let fallbackStoreId = null;
+      let fallbackDistanceKm = null;
       try {
         const ship = orderData.shippingAddress || {};
         const toNum = (v) => {
@@ -293,7 +295,10 @@ export const createOrderApi = async (orderData) => {
           if (fresh.storesAvailable && !fresh.serviceable) {
             throw new Error("Sorry, we don't deliver to your area yet");
           }
-          if (fresh.store) fallbackStoreId = fresh.store.id;
+          if (fresh.store) {
+            fallbackStoreId = fresh.store.id;
+            fallbackDistanceKm = fresh.store.distanceKm ?? null;
+          }
         } else {
           fallbackStoreId = orderData.storeId ?? null;
         }
@@ -302,7 +307,16 @@ export const createOrderApi = async (orderData) => {
         // Resolve fail (infra/network) → legacy: claimed id ya null (order na toote)
         fallbackStoreId = orderData.storeId ?? null;
       }
-      const { data: cloudOrder, error: cloudError } = await supabase.from('orders').insert({
+      // Server down hai to bhi fee distance-based hi save ho: fresh resolved
+      // distance se calculate, warna client ke distance-based fee par fallback.
+      const fallbackItemsPrice = Math.max(0, Number(orderData.itemsPrice) || 0);
+      const fallbackCharge = calculateDeliveryCharge(fallbackDistanceKm);
+      const fallbackDeliveryFee = isFreeDelivery(fallbackItemsPrice) || fallbackItemsPrice === 0
+        ? 0
+        : fallbackCharge != null
+          ? fallbackCharge
+          : Math.max(0, Number(orderData.deliveryFee) || 0);
+      const directPayload = {
         user_id: session.user.id,
         // Nearest eligible store ONLY (upar fresh-resolve hua) — farther/stale id kabhi nahi
         ...(fallbackStoreId != null ? { store_id: fallbackStoreId } : {}),
@@ -310,7 +324,7 @@ export const createOrderApi = async (orderData) => {
         shipping_address: orderData.shippingAddress || {},
         payment_method: orderData.paymentMethod || 'Cash On Delivery',
         items_price: orderData.itemsPrice || 0,
-        delivery_fee: orderData.deliveryFee || 0,
+        delivery_fee: fallbackDeliveryFee,
         coupon_discount: orderData.couponDiscount || 0,
         coupon_code: orderData.couponCode ? String(orderData.couponCode).trim().toUpperCase() : null,
         delivery_instructions: Array.isArray(orderData.deliveryInstructions ?? orderData.delivery_instructions)
@@ -318,10 +332,26 @@ export const createOrderApi = async (orderData) => {
           : [],
         tip_amount: Math.max(0, Number(orderData.tipAmount ?? orderData.tip_amount ?? 0) || 0),
         total_price: orderData.totalPrice || 0,
+        delivery_distance_km: fallbackDistanceKm ?? 0,
         // STORE queue (pack hona baaki): delivery popup is par KABHI nahi —
         // assign SIRF store ke "Mark as Packed" (status 'packed') par hota hai.
         status: 'pending_assignment',
-      }).select().single();
+      };
+      let { data: cloudOrder, error: cloudError } = await supabase
+        .from('orders')
+        .insert(directPayload)
+        .select()
+        .single();
+      // Migration abhi run nahi hui ho to delivery_distance_km hata kar retry
+      if (cloudError && /delivery_distance_km/i.test(cloudError.message || '')) {
+        const retryPayload = { ...directPayload };
+        delete retryPayload.delivery_distance_km;
+        ({ data: cloudOrder, error: cloudError } = await supabase
+          .from('orders')
+          .insert(retryPayload)
+          .select()
+          .single());
+      }
       if (!cloudError && cloudOrder) {
         // Backend bypassed hai to stock decrement bhi yahin (atomic RPC preferred).
         // Short ho to order wapas delete karo — oversell/phantom order nahi.

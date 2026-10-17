@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase.js';
-import { getShippingCoords, resolveOrderStore } from '../utils/storeAssign.js';
+import { getShippingCoords, resolveOrderStore, calculateDeliveryCharge, calculateDeliveryFee } from '../utils/storeAssign.js';
 import { releaseStockReservation, reserveStockForOrder } from '../utils/stock.js';
 
 const isValidUUID = (val) => {
@@ -176,132 +176,11 @@ export const createOrder = async (req, res) => {
     const clientTotalPrice = Number(totalPrice ?? total_price ?? 0) || 0;
     const clientTip = Math.max(0, Number(tipAmount ?? tip_amount ?? 0) || 0);
 
-    // SERVER-AUTHORITATIVE PRICING: DB se real price, coupon DB se verify,
-    // delivery rule (0 ya 499+ par FREE warna 40), total server banayega.
-    let finalItemsPrice = Math.max(0, clientItemsPrice);
-    let finalDeliveryFee = Math.max(0, clientDeliveryFee);
-    let finalCouponDiscount = Math.max(0, clientCouponDiscount);
-    let finalCouponCode = clientCouponCode;
-    let finalTotalPrice = Math.max(0, clientTotalPrice);
-    let finalTipAmount = Math.min(500, clientTip);
-    try {
-      // 1. DB se real prices — kam-se-kam 1 match mila to server sum authoritative
-      const toQty = (v) => {
-        const n = Number(v);
-        return Number.isInteger(n) && n > 0 ? n : 0;
-      };
-      const toDbId = (v) => {
-        const n = Number(v);
-        return Number.isInteger(n) && n > 0 ? n : null;
-      };
-      const ids = [
-        ...new Set(
-          (Array.isArray(finalItems) ? finalItems : [])
-            .map((it) => toDbId(it?.productId ?? it?.product_id ?? it?.id))
-            .filter((n) => n != null)
-        ),
-      ];
-      const priceById = new Map();
-      if (ids.length > 0) {
-        const { data: rows } = await supabase.from('products').select('id,price').in('id', ids);
-        for (const r of rows || []) {
-          const p = Number(r?.price);
-          if (Number.isFinite(p) && p >= 0) priceById.set(Number(r.id), p);
-        }
-      }
-      if (priceById.size > 0) {
-        let sum = 0;
-        let covered = 0;
-        finalItems = (Array.isArray(finalItems) ? finalItems : []).map((it) => {
-          const qty = toQty(it?.quantity ?? it?.qty ?? 1) || 1;
-          const dbId = toDbId(it?.productId ?? it?.product_id ?? it?.id);
-          const dbPrice = dbId != null ? priceById.get(dbId) : undefined;
-          if (dbPrice != null) {
-            covered += 1;
-            sum += dbPrice * qty;
-            return { ...it, price: dbPrice };
-          }
-          sum += (Number(it?.price) || 0) * qty;
-          return it;
-        });
-        if (covered > 0) {
-          finalItemsPrice = Math.round(sum * 100) / 100;
-          // Delivery rule client CartContext jaisa — tampered fee overwrite
-          finalDeliveryFee = finalItemsPrice === 0 || finalItemsPrice > 499 ? 0 : 40;
-        }
-      }
-      // 2. Coupon DB se verify — invalid ho to discount 0 (paisa nahi dubega)
-      if (finalCouponCode) {
-        try {
-          const { data: c } = await supabase
-            .from('coupons')
-            .select('code,discount_type,discount_value,min_order_amount,expiry_date,is_active,usage_limit,used_count')
-            .eq('code', finalCouponCode)
-            .maybeSingle();
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const invalid =
-            !c ||
-            c.is_active === false ||
-            (c.expiry_date && new Date(c.expiry_date) < today) ||
-            Number(c.min_order_amount || 0) > finalItemsPrice ||
-            (c.usage_limit != null && Number(c.used_count || 0) >= Number(c.usage_limit));
-          if (invalid) {
-            finalCouponDiscount = 0;
-            finalCouponCode = null;
-          } else {
-            let allowed = 0;
-            if (String(c.discount_type || '').toLowerCase() === 'flat') {
-              allowed = Number(c.discount_value || 0);
-            } else {
-              allowed = (finalItemsPrice * Number(c.discount_value || 0)) / 100;
-            }
-            allowed = Math.round(Math.max(0, allowed) * 100) / 100;
-            finalCouponDiscount = Math.min(allowed, finalItemsPrice);
-          }
-        } catch {
-          // coupons table missing ho to order na toote — client discount cap karke
-          finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
-        }
-      } else {
-        finalCouponDiscount = 0;
-      }
-      // 3. Total authoritative — client total overwrite
-      finalTotalPrice =
-        Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100;
-      finalTotalPrice = Math.max(0, finalTotalPrice);
-    } catch {
-      // Pricing me kuch fail ho to safe capped fallback — order kabhi na toote
-      finalItemsPrice = Math.max(0, clientItemsPrice);
-      finalDeliveryFee = finalItemsPrice === 0 || finalItemsPrice > 499 ? 0 : 40;
-      finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
-      finalCouponCode = clientCouponCode;
-      finalTipAmount = Math.min(500, clientTip);
-      finalTotalPrice =
-        Math.max(
-          0,
-          Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100
-        );
-    }
-
-    // delivery_instructions: array, JSON string ya single string — sabko TEXT[] me normalize karo
-    const rawInstructions = deliveryInstructions ?? delivery_instructions ?? [];
-    let finalInstructions = [];
-    if (Array.isArray(rawInstructions)) {
-      finalInstructions = rawInstructions.map((v) => String(v).trim()).filter(Boolean);
-    } else if (typeof rawInstructions === 'string' && rawInstructions.trim()) {
-      try {
-        const parsed = JSON.parse(rawInstructions);
-        finalInstructions = Array.isArray(parsed)
-          ? parsed.map((v) => String(v).trim()).filter(Boolean)
-          : [rawInstructions.trim()];
-      } catch {
-        finalInstructions = [rawInstructions.trim()];
-      }
-    }
     // Multi-store: order ka store_id WAHI jo nearest ACTIVE store hai.
     // Client fresh-resolve karke bhejta hai, authoritative check yahan hota hai —
     // stale/tampered id ya missing id server theek kar deta hai.
+    // NOTE: pricing block se PEHLE chalta hai taaki verified distance
+    // (serverDistanceKm) se distance-based delivery fee nikal sake.
     const rawStoreId = storeId ?? store_id ?? null;
     const shipCoords = getShippingCoords(finalShipping);
     const storeResolution = await resolveOrderStore(supabase, {
@@ -355,6 +234,146 @@ export const createOrder = async (req, res) => {
       } catch { /* koi store na mile to null hi rahega, StoreDashboard null-pool dikhayega */ }
     }
 
+    // Server-authoritative delivery distance & charge (₹10/KM, min ₹10, max 5 KM).
+    // Client's deliveryFee is NEVER trusted — recalculated here from trusted store +
+    // delivery address coords. Beyond 5 KM = unavailable (rejected); distance
+    // verify na ho paye (legacy bina coords) to minimum charge fallback.
+    const serverDistanceKm = storeResolution?.distanceKm ?? null;
+    const serverDeliveryFee = serverDistanceKm != null ? calculateDeliveryCharge(serverDistanceKm) : null;
+
+    // 5 KM hard limit — enforce in backend even if the browser hides/tampers it.
+    if (serverDistanceKm != null && serverDeliveryFee === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sorry, we do not deliver to your area yet (beyond 5 KM service radius).',
+      });
+    }
+
+    // SERVER-AUTHORITATIVE PRICING: DB se real price, coupon DB se verify,
+    // delivery rule (₹399+ ya ₹0 par FREE, warna distance-based ₹10/KM min ₹10),
+    // total server banayega.
+    let finalItemsPrice = Math.max(0, clientItemsPrice);
+    let finalDeliveryFee = Math.max(0, clientDeliveryFee);
+    let finalCouponDiscount = Math.max(0, clientCouponDiscount);
+    let finalCouponCode = clientCouponCode;
+    let finalTotalPrice = Math.max(0, clientTotalPrice);
+    let finalTipAmount = Math.min(500, clientTip);
+    try {
+      // 1. DB se real prices — kam-se-kam 1 match mila to server sum authoritative
+      const toQty = (v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : 0;
+      };
+      const toDbId = (v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : null;
+      };
+      const ids = [
+        ...new Set(
+          (Array.isArray(finalItems) ? finalItems : [])
+            .map((it) => toDbId(it?.productId ?? it?.product_id ?? it?.id))
+            .filter((n) => n != null)
+        ),
+      ];
+      const priceById = new Map();
+      if (ids.length > 0) {
+        const { data: rows } = await supabase.from('products').select('id,price').in('id', ids);
+        for (const r of rows || []) {
+          const p = Number(r?.price);
+          if (Number.isFinite(p) && p >= 0) priceById.set(Number(r.id), p);
+        }
+      }
+      if (priceById.size > 0) {
+        let sum = 0;
+        let covered = 0;
+        finalItems = (Array.isArray(finalItems) ? finalItems : []).map((it) => {
+          const qty = toQty(it?.quantity ?? it?.qty ?? 1) || 1;
+          const dbId = toDbId(it?.productId ?? it?.product_id ?? it?.id);
+          const dbPrice = dbId != null ? priceById.get(dbId) : undefined;
+          if (dbPrice != null) {
+            covered += 1;
+            sum += dbPrice * qty;
+            return { ...it, price: dbPrice };
+          }
+          sum += (Number(it?.price) || 0) * qty;
+          return it;
+        });
+        if (covered > 0) {
+          finalItemsPrice = Math.round(sum * 100) / 100;
+        }
+      }
+      // 1b. Distance-based delivery fee (server-authoritative): ₹10/KM, min ₹10,
+      // ₹399+ order par FREE. Client's fee kabhi trust nahi hoti.
+      finalDeliveryFee = calculateDeliveryFee(finalItemsPrice, serverDistanceKm);
+      // 2. Coupon DB se verify — invalid ho to discount 0 (paisa nahi dubega)
+      if (finalCouponCode) {
+        try {
+          const { data: c } = await supabase
+            .from('coupons')
+            .select('code,discount_type,discount_value,min_order_amount,expiry_date,is_active,usage_limit,used_count')
+            .eq('code', finalCouponCode)
+            .maybeSingle();
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const invalid =
+            !c ||
+            c.is_active === false ||
+            (c.expiry_date && new Date(c.expiry_date) < today) ||
+            Number(c.min_order_amount || 0) > finalItemsPrice ||
+            (c.usage_limit != null && Number(c.used_count || 0) >= Number(c.usage_limit));
+          if (invalid) {
+            finalCouponDiscount = 0;
+            finalCouponCode = null;
+          } else {
+            let allowed = 0;
+            if (String(c.discount_type || '').toLowerCase() === 'flat') {
+              allowed = Number(c.discount_value || 0);
+            } else {
+              allowed = (finalItemsPrice * Number(c.discount_value || 0)) / 100;
+            }
+            allowed = Math.round(Math.max(0, allowed) * 100) / 100;
+            finalCouponDiscount = Math.min(allowed, finalItemsPrice);
+          }
+        } catch {
+          // coupons table missing ho to order na toote — client discount cap karke
+          finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
+        }
+      } else {
+        finalCouponDiscount = 0;
+      }
+      // 3. Total authoritative — client total overwrite
+      finalTotalPrice =
+        Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100;
+      finalTotalPrice = Math.max(0, finalTotalPrice);
+    } catch {
+      // Pricing me kuch fail ho to safe capped fallback — order kabhi na toote
+      finalItemsPrice = Math.max(0, clientItemsPrice);
+      finalDeliveryFee = calculateDeliveryFee(finalItemsPrice, serverDistanceKm);
+      finalCouponDiscount = Math.min(Math.max(0, clientCouponDiscount), finalItemsPrice);
+      finalCouponCode = clientCouponCode;
+      finalTipAmount = Math.min(500, clientTip);
+      finalTotalPrice =
+        Math.max(
+          0,
+          Math.round((finalItemsPrice + finalDeliveryFee - finalCouponDiscount + finalTipAmount) * 100) / 100
+        );
+    }
+
+    // delivery_instructions: array, JSON string ya single string — sabko TEXT[] me normalize karo
+    const rawInstructions = deliveryInstructions ?? delivery_instructions ?? [];
+    let finalInstructions = [];
+    if (Array.isArray(rawInstructions)) {
+      finalInstructions = rawInstructions.map((v) => String(v).trim()).filter(Boolean);
+    } else if (typeof rawInstructions === 'string' && rawInstructions.trim()) {
+      try {
+        const parsed = JSON.parse(rawInstructions);
+        finalInstructions = Array.isArray(parsed)
+          ? parsed.map((v) => String(v).trim()).filter(Boolean)
+          : [rawInstructions.trim()];
+      } catch {
+        finalInstructions = [rawInstructions.trim()];
+      }
+    }
     // req.user.id (from token) has highest priority -> per-user isolation for ALL users
     let ownerId = req.user?.id || userId || user_id || null;
     // 'guest' or non-UUID strings violate UUID FK -> store as null (guest order still saves)
@@ -401,6 +420,7 @@ export const createOrder = async (req, res) => {
       delivery_instructions: finalInstructions,
       tip_amount: finalTipAmount,
       total_price: finalTotalPrice,
+      delivery_distance_km: serverDistanceKm ?? 0,
       // Koi partner available na ho to yehi status rehta hai —
       // 30s worker / Realtime listener baad me auto-assign karega.
       // Partner milte hi DB trigger ya resolveInitialAssignment ise 'assigned' karta hai.
@@ -416,7 +436,7 @@ export const createOrder = async (req, res) => {
     // Back-compat: migration file abhi tak run nahi hui ho to missing
     // columns hatakar retry karo taaki order kabhi fail na ho
     let insertPayload = payload;
-    if (error && /coupon_code|delivery_instructions|tip_amount|store_id/i.test(error.message || '')) {
+    if (error && /coupon_code|delivery_instructions|tip_amount|store_id|delivery_distance_km/i.test(error.message || '')) {
       const msg = error.message || '';
       console.warn('⚠️ orders table me column missing, retrying without it (run supabase_orders_*.sql migrations)');
       insertPayload = { ...payload };
@@ -424,6 +444,7 @@ export const createOrder = async (req, res) => {
       if (/delivery_instructions/i.test(msg)) delete insertPayload.delivery_instructions;
       if (/tip_amount/i.test(msg)) delete insertPayload.tip_amount;
       if (/store_id/i.test(msg)) delete insertPayload.store_id;
+      if (/delivery_distance_km/i.test(msg)) delete insertPayload.delivery_distance_km;
       const retry = await supabase.from('orders').insert(insertPayload).select().single();
       data = retry.data;
       error = retry.error;

@@ -18,6 +18,35 @@
 
 export const SERVICE_RADIUS_KM = 5;
 
+// Distance-based delivery pricing:
+// - ₹10 per KM (nearest rupee tak round: 2.3 KM -> ₹23)
+// - minimum ₹10 (1 KM jitna) — bahut chhoti distance par bhi
+// - ₹399+ ke order par FREE delivery
+export const DELIVERY_RATE_PER_KM = 10;
+export const MIN_DELIVERY_CHARGE = 10;
+export const FREE_DELIVERY_THRESHOLD = 399;
+
+// Delivery charge: Distance (KM) x ₹10, nearest rupee tak rounded, minimum ₹10.
+// Returns null if beyond service radius or if distance is invalid
+// (caller must reject the order as unserviceable).
+export const calculateDeliveryCharge = (distanceKm) => {
+  if (distanceKm == null || Number.isNaN(distanceKm) || distanceKm < 0) return null;
+  if (distanceKm > SERVICE_RADIUS_KM) return null;
+  const raw = Math.round(distanceKm * DELIVERY_RATE_PER_KM);
+  if (raw <= 0) return 0;
+  return Math.max(MIN_DELIVERY_CHARGE, raw);
+};
+
+// Final delivery fee for an order: ₹399+ (ya ₹0 items) = FREE, warna
+// distance-based charge. Distance verify na ho paye (legacy request bina
+// coords) to minimum charge — paid delivery kabhi chupke se free na ho.
+export const calculateDeliveryFee = (itemsPrice, distanceKm) => {
+  const subtotal = Math.max(0, Number(itemsPrice) || 0);
+  if (subtotal === 0 || subtotal >= FREE_DELIVERY_THRESHOLD) return 0;
+  const charge = calculateDeliveryCharge(distanceKm);
+  return charge != null ? charge : MIN_DELIVERY_CHARGE;
+};
+
 // Haversine distance (km) — client config/store.js wala formula, backend copy
 export const haversineKm = (lat1, lon1, lat2, lon2) => {
   if ([lat1, lon1, lat2, lon2].some((v) => typeof v !== 'number' || Number.isNaN(v))) return null;
@@ -114,10 +143,12 @@ export const findNearestActiveStore = async (supabase, lat, lng, radiusKm = SERV
 
 /**
  * Order ke liye final store_id decide karo.
- * @returns { storeId: number|null, verified: string, error: 'OUT_OF_SERVICE'|'INVALID_STORE'|null, storesAvailable }
+ * @returns { storeId: number|null, verified: string, error: 'OUT_OF_SERVICE'|'INVALID_STORE'|null, storesAvailable, distanceKm: number|null, storeLat: number|null, storeLng: number|null }
  *  verified: 'claimed' (client sahi tha) | 'corrected' (server ne theek kiya)
  *          | 'auto-resolved' (client ne bheja hi nahi) | 'legacy' (verify Boundary nahi)
  *          | 'infra-missing' (migration pending — legacy mode)
+ *  distanceKm: Haversine KM from delivery coords to nearest store (null when coords missing)
+ *  storeLat/storeLng: nearest store coordinates (null when coords missing)
  */
 export const resolveOrderStore = async (
   supabase,
@@ -136,24 +167,24 @@ export const resolveOrderStore = async (
       nearest = await findNearestActiveStore(supabase, latNum, lngNum, radiusKm);
     } catch (e) {
       console.warn(`⚠️ [store] nearest resolve failed: ${e.message} — legacy mode me order save hoga`);
-      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false };
+      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false, distanceKm: null, storeLat: null, storeLng: null };
     }
     if (!nearest.storesAvailable) {
-      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false };
+      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false, distanceKm: null, storeLat: null, storeLng: null };
     }
     if (!nearest.store) {
-      return { storeId: null, verified: 'none', error: 'OUT_OF_SERVICE', storesAvailable: true };
+      return { storeId: null, verified: 'none', error: 'OUT_OF_SERVICE', storesAvailable: true, distanceKm: null, storeLat: null, storeLng: null };
     }
     if (claimed != null && Number(claimed) === Number(nearest.store.id)) {
-      return { storeId: Number(nearest.store.id), verified: 'claimed', error: null, storesAvailable: true };
+      return { storeId: Number(nearest.store.id), verified: 'claimed', error: null, storesAvailable: true, distanceKm: nearest.store.distanceKm ?? null, storeLat: Number(nearest.store.latitude) || null, storeLng: Number(nearest.store.longitude) || null };
     }
     if (claimed != null) {
       console.warn(
         `⚠️ [store] claimed store ${claimed} != nearest ${nearest.store.id} (${nearest.store.distanceKm?.toFixed?.(2)} km) — authoritative store use hoga`
       );
-      return { storeId: Number(nearest.store.id), verified: 'corrected', error: null, storesAvailable: true };
+      return { storeId: Number(nearest.store.id), verified: 'corrected', error: null, storesAvailable: true, distanceKm: nearest.store.distanceKm ?? null, storeLat: Number(nearest.store.latitude) || null, storeLng: Number(nearest.store.longitude) || null };
     }
-    return { storeId: Number(nearest.store.id), verified: 'auto-resolved', error: null, storesAvailable: true };
+    return { storeId: Number(nearest.store.id), verified: 'auto-resolved', error: null, storesAvailable: true, distanceKm: nearest.store.distanceKm ?? null, storeLat: Number(nearest.store.latitude) || null, storeLng: Number(nearest.store.longitude) || null };
   }
 
   // Case B: coords nahi — claimed id ko kam-se-kam exists+active verify karo
@@ -166,26 +197,31 @@ export const resolveOrderStore = async (
         .maybeSingle();
       if (error) {
         if (isInfraMissingError(error)) {
-          return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false };
+          return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false, distanceKm: null, storeLat: null, storeLng: null };
         }
         throw error;
       }
       if (row && row.is_active !== false) {
-        return { storeId: Number(row.id), verified: 'claimed', error: null, storesAvailable: true };
+        return { storeId: Number(row.id), verified: 'claimed', error: null, storesAvailable: true, distanceKm: null, storeLat: null, storeLng: null };
       }
-      return { storeId: null, verified: 'none', error: 'INVALID_STORE', storesAvailable: true };
+      return { storeId: null, verified: 'none', error: 'INVALID_STORE', storesAvailable: true, distanceKm: null, storeLat: null, storeLng: null };
     } catch (e) {
       console.warn(`⚠️ [store] store verify failed: ${e.message} — legacy mode me order save hoga`);
-      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false };
+      return { storeId: null, verified: 'infra-missing', error: null, storesAvailable: false, distanceKm: null, storeLat: null, storeLng: null };
     }
   }
 
   // Case C: na coords na claimed — legacy (purane clients), store_id null
-  return { storeId: null, verified: 'legacy', error: null, storesAvailable: true };
+  return { storeId: null, verified: 'legacy', error: null, storesAvailable: true, distanceKm: null, storeLat: null, storeLng: null };
 };
 
 export default {
   SERVICE_RADIUS_KM,
+  DELIVERY_RATE_PER_KM,
+  MIN_DELIVERY_CHARGE,
+  FREE_DELIVERY_THRESHOLD,
+  calculateDeliveryCharge,
+  calculateDeliveryFee,
   haversineKm,
   normalizeStoreId,
   getShippingCoords,
