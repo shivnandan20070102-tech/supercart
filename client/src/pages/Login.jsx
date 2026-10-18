@@ -268,7 +268,7 @@ const Login = () => {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-bold text-slate-700">Password</label>
-              {isLogin && <a href="#forgot" className="text-[11px] font-semibold text-emerald-600 hover:underline">Forgot?</a>}
+              {isLogin && <button type="button" onClick={() => navigate('/forgot-password')} className="text-[11px] font-semibold text-emerald-600 hover:underline">Forgot?</button>}
             </div>
             <div className="relative">
               <input type={showPassword ? 'text' : 'password'} name="password" value={formData.password} onChange={handleChange}

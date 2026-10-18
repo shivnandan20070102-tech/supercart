@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, Store } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../config/supabase';
 
@@ -82,6 +82,7 @@ const StoreLogin = () => {
           <span className="relative mt-1.5 block"><LockKeyhole className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input type={showPassword ? 'text' : 'password'} required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-white p-3 pl-10 pr-11 text-sm text-slate-800 outline-none focus:border-emerald-500" /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></span>
         </label>
         <button type="submit" disabled={loading} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3.5 text-sm font-black text-slate-950 disabled:cursor-wait disabled:opacity-60">{loading ? 'Please wait...' : 'Login'} <ArrowRight className="h-4 w-4" /></button>
+        <Link to="/store/forgot-password" className="mt-4 block text-center text-xs font-bold text-emerald-400 hover:text-emerald-300">Forgot password?</Link>
 
         <p className="mt-5 text-center text-[11px] font-semibold text-slate-500">
           No account? Only an admin can create a Store Manager account —<br />please contact your admin.

@@ -8,6 +8,8 @@ import Login from './pages/Login';
 import Profile from './pages/Profile';
 import OrderHistory from './pages/OrderHistory';
 import OrderDetail from './pages/OrderDetail';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import TermsAndConditions from './pages/TermsAndConditions';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import FloatingCart from './components/layout/FloatingCart';
@@ -135,10 +137,14 @@ function App() {
               <Route path="/delivery" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
               {/* Store Panel — sirf store_manager role (account Admin banata hai) */}
               <Route path="/store/login" element={<StoreLogin />} />
+              <Route path="/store/forgot-password" element={<ForgotPassword />} />
+              <Route path="/store/reset-password" element={<ResetPassword />} />
               <Route path="/store/dashboard" element={<StoreGuard><StoreDashboard /></StoreGuard>} />
               <Route path="/store" element={<StoreGuard><StoreDashboard /></StoreGuard>} />
               {/* Customer Login/Signup — standalone clean page, bina Header/Footer ke */}
               <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/signup" element={<Login />} />
               <Route path="*" element={(
                 <ShopLayout
