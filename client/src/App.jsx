@@ -1,17 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import QuickCommerceHeader from './components/layout/QuickCommerceHeader';
 import Footer from './components/layout/Footer';
-import Home from './pages/Home';
-import Cart from './pages/Cart';
-import Login from './pages/Login';
-import Profile from './pages/Profile';
-import OrderHistory from './pages/OrderHistory';
-import OrderDetail from './pages/OrderDetail';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import TermsAndConditions from './pages/TermsAndConditions';
-import PrivacyPolicy from './pages/PrivacyPolicy';
 import FloatingCart from './components/layout/FloatingCart';
 import AutoLocationSetup from './components/AutoLocationSetup';
 import PermissionNotice from './components/PermissionNotice';
@@ -19,24 +9,39 @@ import { CartProvider } from './context/CartContext';
 import { AuthProvider } from './context/AuthContext';
 import { WishlistProvider } from './context/WishlistContext';
 import { StoreProvider } from './context/StoreContext';
-import AdminDashboard from './admin/AdminDashboard';
-import AdminLogin from './admin/AdminLogin';
-import DeliveryLogin from './delivery/DeliveryLogin';
-import DeliverySignup from './delivery/DeliverySignup';
-import DeliveryForgotPassword from './delivery/DeliveryForgotPassword';
-import DeliveryResetPassword from './delivery/DeliveryResetPassword';
-import DeliveryApprovalStatus from './delivery/DeliveryApprovalStatus';
-import DeliveryDashboard from './delivery/DeliveryDashboard';
-import DeliveryHelp from './delivery/DeliveryHelp';
-import DeliveryProfile from './delivery/DeliveryProfile';
-import DeliveryGuard from './delivery/DeliveryGuard';
-import DeliveryActivity from './delivery/DeliveryActivity';
-import DeliveryOrderDetail from './delivery/DeliveryOrderDetail';
-import DeliverySupportTickets from './delivery/DeliverySupportTickets';
-import DeliveryComplaints from './delivery/DeliveryComplaints';
-import StoreLogin from './store/StoreLogin';
-import StoreDashboard from './store/StoreDashboard';
-import StoreGuard from './store/StoreGuard';
+
+const Home = lazy(() => import('./pages/Home'));
+const Cart = lazy(() => import('./pages/Cart'));
+const Login = lazy(() => import('./pages/Login'));
+const Profile = lazy(() => import('./pages/Profile'));
+const OrderHistory = lazy(() => import('./pages/OrderHistory'));
+const OrderDetail = lazy(() => import('./pages/OrderDetail'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const TermsAndConditions = lazy(() => import('./pages/TermsAndConditions'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const AdminDashboard = lazy(() => import('./admin/AdminDashboard'));
+const AdminLogin = lazy(() => import('./admin/AdminLogin'));
+const DeliveryLogin = lazy(() => import('./delivery/DeliveryLogin'));
+const DeliverySignup = lazy(() => import('./delivery/DeliverySignup'));
+const DeliveryForgotPassword = lazy(() => import('./delivery/DeliveryForgotPassword'));
+const DeliveryResetPassword = lazy(() => import('./delivery/DeliveryResetPassword'));
+const DeliveryApprovalStatus = lazy(() => import('./delivery/DeliveryApprovalStatus'));
+const DeliveryDashboard = lazy(() => import('./delivery/DeliveryDashboard'));
+const DeliveryHelp = lazy(() => import('./delivery/DeliveryHelp'));
+const DeliveryProfile = lazy(() => import('./delivery/DeliveryProfile'));
+const DeliveryGuard = lazy(() => import('./delivery/DeliveryGuard'));
+const DeliveryActivity = lazy(() => import('./delivery/DeliveryActivity'));
+const DeliveryOrderDetail = lazy(() => import('./delivery/DeliveryOrderDetail'));
+const DeliverySupportTickets = lazy(() => import('./delivery/DeliverySupportTickets'));
+const DeliveryComplaints = lazy(() => import('./delivery/DeliveryComplaints'));
+const StoreLogin = lazy(() => import('./store/StoreLogin'));
+const StoreDashboard = lazy(() => import('./store/StoreDashboard'));
+const StoreGuard = lazy(() => import('./store/StoreGuard'));
+
+function RouteLoading() {
+  return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-bold text-slate-500">Loading...</div>;
+}
 
 /**
  * ScrollToTop — har route change + reload par page header (top) se dikhao,
@@ -118,6 +123,7 @@ function App() {
               <ScrollToTop />
           <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-emerald-500 selection:text-white">
             {/* Header Navigation */}
+            <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/admin/login" element={<AdminLogin />} />
               <Route path="/admin" element={<AdminDashboard />} />
@@ -155,6 +161,7 @@ function App() {
                 />
               )} />
             </Routes>
+            </Suspense>
           </div>
             </Router>
           </StoreProvider>
