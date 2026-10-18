@@ -102,8 +102,6 @@ const DeliveryProfile = () => {
     const loadProfile = async () => {
       const { data: { user: current }, error: authError } = await supabase.auth.getUser();
       if (authError || !current) { navigate('/delivery/login', { replace: true }); return; }
-      const { data: role } = await supabase.from('users').select('role').eq('id', current.id).maybeSingle();
-      if (!['delivery', 'delivery_partner'].includes(String(role?.role || '').toLowerCase())) { navigate('/', { replace: true }); return; }
       const { data: profile } = await supabase.from('delivery_profiles').select('*').eq('user_id', current.id).maybeSingle();
       const [{ count: trips }, { count: gigs }, { data: offerRows }] = await Promise.all([
         supabase.from('orders').select('id', { count: 'exact', head: true }).eq('delivery_boy_id', current.id).in('status', ['delivered', 'Delivered', 'completed', 'Completed']),

@@ -38,8 +38,6 @@ const normalizeInstructions = (value) => {
   return [];
 };
 
-const deliveryRoles = ['delivery_partner'];
-
 // Siren "suna hua" registry — kaunsa assignment popup is device par pehle
 // khul chuka hai. Phone pocket/screen-off me assignment miss ho jaye to agli
 // baar app khulne par boot backlog SILENT khulta tha (alert=false) — isliye
@@ -383,17 +381,6 @@ const DeliveryDashboard = () => {
       const { data: { user: current }, error: authError } = await supabase.auth.getUser();
       if (authError || !current) {
         navigate('/delivery/login', { replace: true });
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', current.id)
-        .maybeSingle();
-
-      if (profileError || !deliveryRoles.includes(String(profile?.role || '').toLowerCase())) {
-        navigate('/', { replace: true });
         return;
       }
 

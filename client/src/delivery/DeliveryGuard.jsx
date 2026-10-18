@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 
-const allowedRoles = new Set(['delivery_partner']);
-
 export default function DeliveryGuard({ children }) {
   const [state, setState] = useState({ loading: true, allowed: false, redirect: null });
 
@@ -26,12 +24,6 @@ export default function DeliveryGuard({ children }) {
         .maybeSingle();
 
       if (!active) return;
-
-      const role = String(profileRow?.role || '').toLowerCase();
-      if (!allowedRoles.has(role)) {
-        setState({ loading: false, allowed: false, redirect: '/delivery/login' });
-        return;
-      }
 
       const { data: deliveryProfile } = await supabase
         .from('delivery_profiles')

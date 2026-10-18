@@ -4,8 +4,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../config/supabase';
 
-const deliveryRoles = ['delivery_partner'];
-
 const DeliveryLogin = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,8 +39,7 @@ const DeliveryLogin = () => {
     const redirectIfAuthenticated = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !active) return;
-      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-      if (!active || !deliveryRoles.includes(String(profile?.role || '').toLowerCase())) return;
+      if (!active) return;
       const { data: deliveryProfile } = await supabase.from('delivery_profiles').select('approval_status, profile_completed').eq('user_id', user.id).maybeSingle();
       if (!active) return;
       if (!deliveryProfile) return navigate('/delivery/profile', { replace: true });
@@ -82,7 +79,7 @@ const DeliveryLogin = () => {
 
     const result = isSignup
       ? await signUpWithEmail({ ...form, role: 'delivery_partner' })
-      : await signInWithEmail(form.email.trim(), form.password, 'delivery_partner');
+      : await signInWithEmail(form.email.trim(), form.password);
     if (!result.success) {
       setError(result.message || 'Login failed.');
       setLoading(false);
@@ -95,18 +92,12 @@ const DeliveryLogin = () => {
     }
 
     const { data: { user } } = await supabase.auth.getUser();
-    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-    if (String(profile?.role || '').toLowerCase() === 'delivery_partner') {
-      const { data: deliveryProfile } = await supabase.from('delivery_profiles').select('approval_status, profile_completed').eq('user_id', user.id).maybeSingle();
-      const status = String(deliveryProfile?.approval_status || 'pending').toLowerCase();
-      if (status === 'approved') navigate('/delivery/dashboard');
-      else if (status === 'rejected') navigate('/delivery/profile');
-      else if (deliveryProfile?.profile_completed) navigate('/delivery/approval-pending');
-      else navigate('/delivery/profile');
-    } else {
-      await supabase.auth.signOut();
-      setError('This account is not a delivery partner.');
-    }
+    const { data: deliveryProfile } = await supabase.from('delivery_profiles').select('approval_status, profile_completed').eq('user_id', user.id).maybeSingle();
+    const status = String(deliveryProfile?.approval_status || 'pending').toLowerCase();
+    if (status === 'approved') navigate('/delivery/dashboard');
+    else if (status === 'rejected') navigate('/delivery/profile');
+    else if (deliveryProfile?.profile_completed) navigate('/delivery/approval-pending');
+    else navigate('/delivery/profile');
     setLoading(false);
   };
 
