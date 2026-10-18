@@ -208,6 +208,11 @@ $$;
 -- Usage:
 --   SELECT * FROM public.get_nearest_active_stores(28.6139, 77.2090, 5);
 -- ---------------------------------------------------
+-- Return columns badalne par CREATE OR REPLACE fail hota hai (Postgres 42P13).
+-- Pehle ke versions / supabase_store_timings.sql se bani hui function ko
+-- safely replace karne ke liye signature se drop karna zaroori hai.
+DROP FUNCTION IF EXISTS public.get_nearest_active_stores(DOUBLE PRECISION, DOUBLE PRECISION, INTEGER);
+
 CREATE OR REPLACE FUNCTION public.get_nearest_active_stores(
     customer_lat DOUBLE PRECISION,
     customer_lon DOUBLE PRECISION,

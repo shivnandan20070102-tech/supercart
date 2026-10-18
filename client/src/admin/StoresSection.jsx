@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import {
   Crosshair,
   ExternalLink,
@@ -13,7 +12,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { supabase, supabaseAnonKey, supabaseUrl } from '../config/supabase';
+import { supabase } from '../config/supabase';
 import StoreMapPicker from './StoreMapPicker';
 import { logAdminActivity } from '../utils/adminActivity';
 
@@ -22,12 +21,7 @@ const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 const inputCls =
   'w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500';
 
-// Manager signup ke liye alag client (session persist NAHI) —
-// taaki naya account banate waqt Admin ka apna login untouched rahe.
-const tmpAuthClient = () =>
-  createClient(supabaseUrl, supabaseAnonKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
 const emptyStore = { store_name: '', address: '', latitude: '', longitude: '', contact_number: '', is_active: true, opening_time: '', closing_time: '' };
 
@@ -369,13 +363,6 @@ const StoresSection = ({ searchQuery = '' }) => {
     setManagerModal(store);
   };
 
-  const linkStaff = async (storeId, userId) => {
-    const { error } = await supabase
-      .from('store_staff')
-      .upsert({ store_id: storeId, user_id: userId }, { onConflict: 'store_id,user_id' });
-    if (error) throw error;
-  };
-
   const createManager = async (e) => {
     e.preventDefault();
     const email = managerForm.email.trim().toLowerCase();
@@ -385,48 +372,28 @@ const StoresSection = ({ searchQuery = '' }) => {
     }
     setSavingManager(true);
     try {
-      // Pehle signup try (trigger users row me role=store_manager lagayega)
-      const { data, error } = await tmpAuthClient().auth.signUp({
-        email,
-        password: managerForm.password,
-        options: { data: { full_name: managerForm.name.trim(), phone: managerForm.phone.trim(), role: 'store_manager' } },
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Admin session expired. Please log in again.');
+      const response = await fetch(`${API_BASE_URL}/api/auth/store-manager`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          name: managerForm.name.trim(),
+          email,
+          password: managerForm.password,
+          phone: managerForm.phone.trim(),
+          storeId: managerModal.id,
+        }),
       });
-
-      let userId = data?.user?.id || null;
-
-      if (error) {
-        // Email pehle se registered → existing user ko link karo
-        if (/already|registered|exists|duplicate/i.test(error.message || '')) {
-          const { data: existing, error: lookupError } = await supabase
-            .from('users')
-            .select('id')
-            .eq('email', email)
-            .maybeSingle();
-          if (lookupError || !existing) throw new Error('This email is already registered, but no user record was found.');
-          userId = existing.id;
-        } else {
-          throw error;
-        }
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || `Manager creation failed (${response.status}).`);
       }
-
-      if (!userId) throw new Error('Account could not be created. Please try again.');
-
-      // Role pakka store_manager (trigger miss ho to bhi)
-      const { error: profileError } = await supabase
-        .from('users')
-        .update({ role: 'store_manager', name: managerForm.name.trim() })
-        .eq('id', userId);
-      if (profileError) throw profileError;
-      await linkStaff(managerModal.id, userId);
-
-      const needsConfirm = !data?.session;
       setManagerModal(null);
-      showNotice(
-        'success',
-        needsConfirm && !error
-          ? `Manager account created ✅ — A confirmation email was sent to ${email}; after verification, /store/login will work. Linked to the store.`
-          : `Manager "${managerForm.name.trim()}" created ✅ and linked to "${managerModal.store_name}".`,
-      );
+      showNotice('success', `${result.message || `Manager "${managerForm.name.trim()}" created.`} Login now works with the entered password.`);
       await loadAll();
     } catch (err) {
       showNotice('error', err.message || 'Manager account could not be created.');

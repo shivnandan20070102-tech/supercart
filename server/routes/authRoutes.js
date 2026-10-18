@@ -1,5 +1,5 @@
 import express from 'express';
-import { signupUser, loginUser, getUserProfile, forgotPassword } from '../controllers/authController.js';
+import { signupUser, loginUser, getUserProfile, forgotPassword, createStoreManager } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { forgotPasswordLimiter, loginLimiter, signupLimiter } from '../middleware/rateLimit.js';
 
@@ -12,6 +12,7 @@ router.post('/register', signupLimiter, signupUser); // alias
 router.post('/login', loginLimiter, loginUser);
 router.post('/forgot-password', forgotPasswordLimiter, forgotPassword);
 router.post('/forgot_password', forgotPasswordLimiter, forgotPassword); // alias
+router.post('/store-manager', protect, createStoreManager);
 router.get('/profile', protect, getUserProfile);
 
 export default router;

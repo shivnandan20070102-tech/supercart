@@ -106,6 +106,7 @@ export const signupUser = async (req, res) => {
         phone: phone || '',
         role: 'customer',
       };
+
       localUsers.push(fallbackUser);
 
       return res.status(201).json({
@@ -142,6 +143,86 @@ export const signupUser = async (req, res) => {
       message: 'Server error during signup',
       error: error.message,
     });
+  }
+};
+
+// Admin-created store manager. This must use Supabase Auth admin APIs so the
+// account is confirmed immediately and the password entered by Admin is valid.
+export const createStoreManager = async (req, res) => {
+  try {
+    const { name, email, password, phone, storeId } = req.body || {};
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const parsedStoreId = Number(storeId);
+
+    if (!name?.trim() || !cleanEmail || !password || !Number.isInteger(parsedStoreId)) {
+      return res.status(400).json({ success: false, message: 'Name, email, password, and store are required.' });
+    }
+    if (String(password).length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(503).json({
+        success: false,
+        message: 'Manager creation is not configured on the backend. Add SUPABASE_SERVICE_ROLE_KEY to the server environment.',
+      });
+    }
+
+    const { data: adminProfile, error: adminProfileError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', req.user.id)
+      .maybeSingle();
+    if (adminProfileError) throw adminProfileError;
+    if (String(adminProfile?.role || '').toLowerCase() !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only an admin can create store managers.' });
+    }
+
+    const { data: store, error: storeError } = await supabase
+      .from('stores')
+      .select('id,store_name,is_active')
+      .eq('id', parsedStoreId)
+      .maybeSingle();
+    if (storeError) throw storeError;
+    if (!store) return res.status(404).json({ success: false, message: 'Store not found.' });
+    if (store.is_active === false) return res.status(400).json({ success: false, message: 'Cannot create a manager for an inactive store.' });
+
+    const { data: created, error: createError } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password: String(password),
+      email_confirm: true,
+      user_metadata: {
+        full_name: name.trim(),
+        phone: String(phone || '').trim(),
+        role: 'store_manager',
+      },
+    });
+    if (createError || !created?.user) {
+      return res.status(400).json({ success: false, message: createError?.message || 'Manager account could not be created.' });
+    }
+
+    const userId = created.user.id;
+    const { error: profileError } = await supabase.from('users').upsert({
+      id: userId,
+      name: name.trim(),
+      email: cleanEmail,
+      phone: String(phone || '').trim(),
+      role: 'store_manager',
+    }, { onConflict: 'id' });
+    if (profileError) throw profileError;
+
+    const { error: linkError } = await supabase
+      .from('store_staff')
+      .upsert({ store_id: parsedStoreId, user_id: userId }, { onConflict: 'store_id,user_id' });
+    if (linkError) throw linkError;
+
+    return res.status(201).json({
+      success: true,
+      message: `Manager "${name.trim()}" created and linked to "${store.store_name}".`,
+      data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId },
+    });
+  } catch (error) {
+    console.error('Store manager creation failed:', error?.message || error);
+    return res.status(500).json({ success: false, message: 'Manager account could not be created.' });
   }
 };
 
