@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js';
 import { getShippingCoords, resolveOrderStore, calculateDeliveryCharge, calculateDeliveryFee } from '../utils/storeAssign.js';
 import { releaseStockReservation, reserveStockForOrder } from '../utils/stock.js';
+import { barcodesMatch, itemProductId } from '../utils/barcodeMatch.js';
 
 const isValidUUID = (val) => {
   if (!val || typeof val !== 'string') return false;
@@ -1029,6 +1030,58 @@ export const markOrderPacked = async (req, res) => {
     const alreadyAssigned =
       order.delivery_boy_id != null && String(order.delivery_boy_id).trim() !== '';
     let packed = order;
+
+    // 4.5 BARCODE VERIFICATION GATE (strict, server-side):
+    // Store panel pack se PEHLE har item verify karta hai —
+    //  - jis product ka barcode_number set hai: scan kiya hua barcode match
+    //    karna ZAROORI hai (GTIN leading-zero normalize ke saath),
+    //  - jiska barcode nahi hai: store ne explicitly "Confirm" kiya ho
+    //    (manual: true).
+    // Bina poora verify hue pack request 400 reject — koi bhi purana client /
+    // direct API call / cache pack nahi kar sakta. (DB hard guard + ye gate
+    // dono milkar bypass-proof rakhte hain.)
+    if (!alreadyAssigned && isStoreQueueStatus(order.status)) {
+      const verifiedItems = Array.isArray(req.body?.verified_items) ? req.body.verified_items : [];
+      const items = Array.isArray(order.order_items) ? order.order_items : [];
+      const productIds = [...new Set(items.map(itemProductId).filter((n) => n != null))];
+      const barcodeByProductId = new Map();
+      if (productIds.length > 0) {
+        let prodRes = await supabase.from('products').select('id,barcode_number').in('id', productIds);
+        if (prodRes.error && /barcode_number|column|schema cache/i.test(prodRes.error.message || '')) {
+          // Migration pending: barcode column nahi hai — sab items manual-confirm lane me.
+          prodRes = await supabase.from('products').select('id').in('id', productIds);
+        }
+        if (prodRes.error) {
+          console.error(`❌ [pack] order #${id} barcode fetch fail:`, prodRes.error.message);
+          return res.status(500).json({
+            success: false,
+            message: 'Barcode verification check failed. Please try again.',
+          });
+        }
+        for (const p of prodRes.data || []) {
+          const bc = String(p?.barcode_number || '').trim();
+          if (bc) barcodeByProductId.set(Number(p.id), bc);
+        }
+      }
+      const unverified = [];
+      for (let idx = 0; idx < items.length; idx++) {
+        const expected = barcodeByProductId.get(itemProductId(items[idx]));
+        const entry = verifiedItems.find((e) => Number(e?.index) === idx);
+        const ok = expected
+          ? barcodesMatch(entry?.barcode, expected)
+          : Boolean(entry && entry.manual === true);
+        if (!ok) unverified.push(String(items[idx]?.name || `Item ${idx + 1}`));
+      }
+      if (unverified.length > 0) {
+        return res.status(400).json({
+          success: false,
+          code: 'BARCODE_NOT_VERIFIED',
+          message: `Sabhi items verify nahi hue: ${unverified.slice(0, 3).join(', ')}${unverified.length > 3 ? ` +${unverified.length - 3} more` : ''}. Har item ka barcode scan karo (ya barcode na ho to Confirm karo), phir Mark as Packed dabao.`,
+          unverified,
+        });
+      }
+    }
+
     if (!alreadyAssigned && isStoreQueueStatus(order.status)) {
       // Claim case me store_id bhi set karo taaki order is store ka ho jaye
       const packUpdate = claimedStoreId != null ? { status: 'packed', store_id: claimedStoreId } : { status: 'packed' };

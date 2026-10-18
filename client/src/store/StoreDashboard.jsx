@@ -11,6 +11,7 @@ import {
   Minus,
   Package,
   PackageCheck,
+  ScanBarcode,
   Pencil,
   Phone,
   Plus,
@@ -24,6 +25,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { markOrderPackedApi } from '../services/api';
+import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import { barcodesMatch } from '../utils/barcodeVerify';
 import ComplaintForm from '../components/ComplaintForm';
 import { buildProductPayload, canManageProduct } from './storeProductAccess';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
@@ -196,11 +199,15 @@ const StoreDashboard = () => {
   const [customersById, setCustomersById] = useState(new Map());
   const [partnersById, setPartnersById] = useState(new Map());
   const [productImageById, setProductImageById] = useState(new Map());
+  const [productBarcodeById, setProductBarcodeById] = useState(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [tab, setTab] = useState('new'); // new | packed | all | products | support
   const [packingId, setPackingId] = useState(null);
+  const [verifiedItemsByOrder, setVerifiedItemsByOrder] = useState({});
+  const [scannerTarget, setScannerTarget] = useState(null);
+  const [scanError, setScanError] = useState('');
   const [showProfile, setShowProfile] = useState(false);
   // Products section: apne store(s) ke products + per-row stock editing state.
   const [storeProducts, setStoreProducts] = useState([]);
@@ -294,20 +301,29 @@ const StoreDashboard = () => {
       const missingIds = new Set();
       for (const o of rows) {
         for (const it of normalizeItems(o)) {
-          if (!it.image && it.productId != null && String(it.productId).trim() !== '' && !Number.isNaN(Number(it.productId))) {
+          if (it.productId != null && String(it.productId).trim() !== '' && !Number.isNaN(Number(it.productId))) {
             missingIds.add(Number(it.productId));
           }
         }
       }
       if (missingIds.size > 0) {
-        const { data: prods } = await supabase.from('products').select('id,image').in('id', [...missingIds]);
+        let productResult = await supabase.from('products').select('id,image,barcode_number').in('id', [...missingIds]);
+        if (productResult.error && /barcode_number|column|schema cache/i.test(productResult.error.message || '')) {
+          productResult = await supabase.from('products').select('id,image').in('id', [...missingIds]);
+        }
+        if (productResult.error) throw productResult.error;
+        const prods = productResult.data;
         const imgMap = new Map();
+        const barcodeMap = new Map();
         for (const p of prods || []) {
           if (p?.image) imgMap.set(Number(p.id), p.image);
+          if (p?.barcode_number) barcodeMap.set(Number(p.id), String(p.barcode_number).trim());
         }
         setProductImageById(imgMap);
+        setProductBarcodeById(barcodeMap);
       } else {
         setProductImageById(new Map());
+        setProductBarcodeById(new Map());
       }
     } catch {
       /* image resolve fail ho to existing fallback UI rahega */
@@ -487,10 +503,16 @@ const StoreDashboard = () => {
 
   const handlePack = async (order) => {
     if (packingId) return;
+    const items = normalizeItems(order);
+    const verifiedItems = (verifiedItemsByOrder[order.id] || []).filter(Boolean);
+    if (items.length === 0 || !items.every((_, index) => verifiedItems.some((entry) => entry.index === index))) {
+      setError('Pack karne se pehle har product ka barcode verify karo.');
+      return;
+    }
     setPackingId(order.id);
     setError('');
     try {
-      const res = await markOrderPackedApi(order.id);
+      const res = await markOrderPackedApi(order.id, verifiedItems);
       if (!res.success) throw new Error(res.message || 'Could not mark as packed.');
       showToast(res.assigned ? `Order #${order.id} packed ✅ — partner assigned 🎉` : `Order #${order.id} packed ✅ — partner pending`);
       await loadOrders(storeIds);
@@ -1162,6 +1184,9 @@ const StoreDashboard = () => {
               }));
               const packable = isPackable(order);
               const packing = packingId === order.id;
+              const verifiedItems = verifiedItemsByOrder[order.id] || [];
+              const allItemsVerified = items.length > 0
+                && items.every((_, index) => verifiedItems.some((entry) => entry.index === index));
               const waitingForRider = statusLower(order.status) === 'packed' && !order.delivery_boy_id;
               // Rider-to-store distance — SIRF assigned/home-store context me.
               // Orders pehle hi store_id IN (my stores) se filtered hain + partner
@@ -1238,6 +1263,41 @@ const StoreDashboard = () => {
                             </span>
                             <span className="shrink-0 font-black text-slate-100">× {it.quantity}</span>
                             <span className="w-16 shrink-0 text-right font-bold text-slate-300">₹{it.price * it.quantity}</span>
+                            {packable && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const expected = it.productId != null
+                                    ? productBarcodeById.get(Number(it.productId)) || ''
+                                    : '';
+                                  setScanError('');
+                                  if (!expected) {
+                                    setVerifiedItemsByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: [
+                                        ...(current[order.id] || []).filter((entry) => entry.index !== idx),
+                                        { index: idx, manual: true },
+                                      ],
+                                    }));
+                                    showToast(`${it.name} confirmed (barcode not configured)`);
+                                  } else {
+                                    setScannerTarget({ orderId: order.id, index: idx, name: it.name, expected });
+                                  }
+                                }}
+                                className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-black transition ${
+                                  verifiedItems.some((entry) => entry.index === idx)
+                                    ? 'bg-emerald-950 text-emerald-300'
+                                    : 'bg-violet-950 text-violet-300 hover:bg-violet-900'
+                                }`}
+                              >
+                                {verifiedItems.some((entry) => entry.index === idx) ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ScanBarcode className="h-3.5 w-3.5" />
+                                )}
+                                {verifiedItems.some((entry) => entry.index === idx) ? 'Verified' : 'Scan to Verify'}
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -1282,11 +1342,11 @@ const StoreDashboard = () => {
                       <button
                         type="button"
                         onClick={() => handlePack(order)}
-                        disabled={packing}
-                        className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-sm font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
+                        disabled={packing || !allItemsVerified}
+                        className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-sm font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 disabled:opacity-100"
                       >
                         <PackageCheck className="h-5 w-5" />
-                        {packing ? 'Packing...' : 'Mark as Packed'}
+                        {packing ? 'Packing...' : allItemsVerified ? 'Mark as Packed' : 'Verify all products first'}
                       </button>
                     ) : (
                       <div className="flex items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 text-xs font-black text-slate-400">
@@ -1301,6 +1361,34 @@ const StoreDashboard = () => {
           </div>
         )}
       </main>
+
+      {scannerTarget && (
+        <BarcodeScannerModal
+          title={`Verify ${scannerTarget.name}`}
+          hint="Product packet ka barcode camera ke saamne rakho."
+          errorText={scanError}
+          onDetected={(value) => {
+            if (!barcodesMatch(value, scannerTarget.expected)) {
+              setScanError('Barcode match nahi hua. Isi product ka barcode scan karo.');
+              return;
+            }
+            setVerifiedItemsByOrder((current) => ({
+              ...current,
+              [scannerTarget.orderId]: [
+                ...(current[scannerTarget.orderId] || []).filter((entry) => entry.index !== scannerTarget.index),
+                { index: scannerTarget.index, barcode: value },
+              ],
+            }));
+            setScannerTarget(null);
+            setScanError('');
+            showToast(`${scannerTarget.name} verified ✅`);
+          }}
+          onClose={() => {
+            setScannerTarget(null);
+            setScanError('');
+          }}
+        />
+      )}
 
       {/* ---- Add/Edit Product Modal — SIRF apne store ke liye ----
           Naya product hamesha manager ke apne store se link hota hai. */}

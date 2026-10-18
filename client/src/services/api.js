@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase';
 import { findNearestStore } from './nearestStore';
 import { decrementStockDirect } from './stock';
 import { calculateDeliveryCharge, isFreeDelivery } from '../config/store';
+import { barcodesMatch } from '../utils/barcodeVerify';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
@@ -557,16 +558,19 @@ const buildPackUrls = (orderId) => {
   return [...new Set(urls)];
 };
 
-export const markOrderPackedApi = async (orderId) => {
+export const markOrderPackedApi = async (orderId, verifiedItems = []) => {
   const token = await getFreshPackToken();
   const headers = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+  // BARCODE GATE: server har item ki verification khud dobara check karta hai
+  // (barcode match / manual confirm) — bina verify pack reject (400).
+  const body = JSON.stringify({ verified_items: Array.isArray(verifiedItems) ? verifiedItems : [] });
   let lastNetworkError = null;
   for (const url of buildPackUrls(orderId)) {
     try {
-      const res = await fetch(url, { method: 'PUT', headers });
+      const res = await fetch(url, { method: 'PUT', headers, body });
       let json = null;
       try {
         json = await res.json();
@@ -597,14 +601,21 @@ export const markOrderPackedApi = async (orderId) => {
       '[MarkAsPacked] backend unreachable (dono URLs fail). Direct-Supabase fallback chala rahe hain. ' +
       'Fix: server/ me `npm run dev` chal raha hai na check karo, aur client/.env me VITE_API_BASE_URL sahi hai na dekho.'
     );
-    return await markOrderPackedDirect(orderId);
+    return await markOrderPackedDirect(orderId, verifiedItems);
   }
   throw new Error('Could not mark as packed. Please check if the backend server is running.');
 };
 
+// Order item se productId (multiple legacy shapes) — direct fallback gate ke liye.
+const itemProductIdOf = (item) => {
+  const raw = item?.productId ?? item?.product_id ?? null;
+  if (raw == null || String(raw).trim() === '' || Number.isNaN(Number(raw))) return null;
+  return Number(raw);
+};
+
 // Backend-down fallback: same rules, direct Supabase (parallel system NAHI —
 // same tables, same PACKED-gate, same free-only random assign via shared RPC).
-const markOrderPackedDirect = async (orderId) => {
+const markOrderPackedDirect = async (orderId, verifiedItems = []) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Login expired. Please log in again.');
   const { data: me } = await supabase.from('users').select('id, role').eq('id', user.id).maybeSingle();
@@ -642,6 +653,30 @@ const markOrderPackedDirect = async (orderId) => {
   const alreadyAssigned = order.delivery_boy_id && String(order.delivery_boy_id).trim() !== '';
   let packed = order;
   if (!alreadyAssigned && ['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', ''].includes(statusKey)) {
+    const items = Array.isArray(order.order_items) ? order.order_items : [];
+    const productIds = [...new Set(items.map(itemProductIdOf).filter((value) => value != null))];
+    let products = [];
+    if (productIds.length > 0) {
+      let productResult = await supabase.from('products').select('id,barcode_number').in('id', productIds);
+      if (productResult.error && /barcode_number|column|schema cache/i.test(productResult.error.message || '')) {
+        productResult = await supabase.from('products').select('id').in('id', productIds);
+      }
+      if (productResult.error) throw new Error(`Barcode verification check failed: ${productResult.error.message}`);
+      products = productResult.data || [];
+    }
+    const barcodeByProductId = new Map(
+      products
+        .filter((product) => product?.barcode_number)
+        .map((product) => [Number(product.id), String(product.barcode_number).trim()]),
+    );
+    const unverified = items.filter((item, index) => {
+      const expected = barcodeByProductId.get(itemProductIdOf(item));
+      const entry = verifiedItems.find((candidate) => Number(candidate?.index) === index);
+      return expected ? !barcodesMatch(entry?.barcode, expected) : entry?.manual !== true;
+    });
+    if (unverified.length > 0) {
+      throw new Error(`Sabhi products verify nahi hue: ${unverified.slice(0, 3).map((item) => item?.name || 'Item').join(', ')}`);
+    }
     const packUpdate = claimedStoreId != null ? { status: 'packed', store_id: claimedStoreId } : { status: 'packed' };
     const { data: updated, error: updateError } = await supabase
       .from('orders')
