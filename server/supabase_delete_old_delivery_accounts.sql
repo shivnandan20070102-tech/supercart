@@ -14,7 +14,7 @@ WHERE lower(u.role) IN ('delivery', 'delivery_partner');
 UPDATE public.orders
 SET delivery_boy_id = NULL
 WHERE delivery_boy_id IN (
-  SELECT au.id
+  SELECT au.id::text
   FROM auth.users AS au
   JOIN public.users AS u ON u.id = au.id
   WHERE lower(u.role) IN ('delivery', 'delivery_partner')
