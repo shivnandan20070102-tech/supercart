@@ -186,21 +186,44 @@ export const createStoreManager = async (req, res) => {
     if (!store) return res.status(404).json({ success: false, message: 'Store not found.' });
     if (store.is_active === false) return res.status(400).json({ success: false, message: 'Cannot create a manager for an inactive store.' });
 
-    const { data: created, error: createError } = await supabase.auth.admin.createUser({
-      email: cleanEmail,
-      password: String(password),
-      email_confirm: true,
-      user_metadata: {
-        full_name: name.trim(),
-        phone: String(phone || '').trim(),
-        role: 'store_manager',
-      },
-    });
-    if (createError || !created?.user) {
-      return res.status(400).json({ success: false, message: createError?.message || 'Manager account could not be created.' });
+    const userMetadata = {
+      full_name: name.trim(),
+      phone: String(phone || '').trim(),
+      role: 'store_manager',
+    };
+    const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (listError) throw listError;
+    const existingAuthUser = (authUsers?.users || []).find(
+      (authUser) => String(authUser.email || '').toLowerCase() === cleanEmail,
+    );
+
+    let userId;
+    if (existingAuthUser) {
+      // A previous failed attempt may have created the Auth user with a
+      // different/unknown password. Reset it so Admin's current password is
+      // always the one that works at Store Login.
+      const { data: updated, error: updateAuthError } = await supabase.auth.admin.updateUserById(existingAuthUser.id, {
+        password: String(password),
+        email_confirm: true,
+        user_metadata: userMetadata,
+      });
+      if (updateAuthError || !updated?.user) {
+        return res.status(400).json({ success: false, message: updateAuthError?.message || 'Manager account could not be updated.' });
+      }
+      userId = updated.user.id;
+    } else {
+      const { data: created, error: createError } = await supabase.auth.admin.createUser({
+        email: cleanEmail,
+        password: String(password),
+        email_confirm: true,
+        user_metadata: userMetadata,
+      });
+      if (createError || !created?.user) {
+        return res.status(400).json({ success: false, message: createError?.message || 'Manager account could not be created.' });
+      }
+      userId = created.user.id;
     }
 
-    const userId = created.user.id;
     const { error: profileError } = await supabase.from('users').upsert({
       id: userId,
       name: name.trim(),
