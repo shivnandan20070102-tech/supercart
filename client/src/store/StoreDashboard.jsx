@@ -238,9 +238,7 @@ const StoreDashboard = () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
   }, []);
 
-  // Apne store(s) ke orders + customer/partner naam ek saath
-  // TO-PACK FIX: store_id NULL wale (purane/legacy) orders bhi lao taaki koi
-  // naya order gayab na ho — har naya order To-Pack me dikhna chahiye.
+  // Sirf manager ke linked stores ke orders + customer/partner naam lao.
   const loadOrders = useCallback(async (ids) => {
     if (!ids || ids.length === 0) {
       setOrders([]);
@@ -254,20 +252,8 @@ const StoreDashboard = () => {
       .limit(100);
     if (ordersError) throw ordersError;
 
-    // Unassigned pool (store_id null) — kisi bhi store ka manager dekh/pack kar sake
-    let nullRows = [];
-    try {
-      const res = await supabase
-        .from('orders')
-        .select('*')
-        .is('store_id', null)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (!res.error) nullRows = res.data || [];
-    } catch { /* null-pool optional — main list to aa hi gayi */ }
-
     const merged = new Map();
-    for (const o of [...(data || []), ...nullRows]) {
+    for (const o of data || []) {
       if (o && o.id != null) merged.set(o.id, o);
     }
     const rows = [...merged.values()].sort(

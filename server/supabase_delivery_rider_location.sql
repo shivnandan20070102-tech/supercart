@@ -18,9 +18,8 @@
 -- - Backend assignment inhe padhkar nearest eligible rider chunta hai.
 -- - Location na ho (permission denied / purana app) to assignment phir bhi
 --   kaam karta hai — existing random rule fallback hai (order kabhi stuck nahi).
--- - users par RLS policy pehle se open hai ("Allow public access on users"),
---   isliye koi nayi policy nahi chahiye. is_available/verified ko ye file
---   haath nahi lagati.
+-- - Authenticated customers ko rider ki current location read karni hoti hai.
+--   is_available/verified ko ye file haath nahi lagati.
 -- ===================================================
 
 ALTER TABLE public.users
@@ -47,6 +46,12 @@ BEGIN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
     END IF;
 END $$;
+
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Authenticated users read rider locations" ON public.users;
+CREATE POLICY "Authenticated users read rider locations" ON public.users
+    FOR SELECT TO authenticated
+    USING (role IN ('delivery', 'delivery_partner') OR id = auth.uid());
 
 -- ===================================================
 -- VERIFY (optional, RUN ke baad alag se chalao):

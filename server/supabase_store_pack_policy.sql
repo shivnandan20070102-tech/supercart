@@ -81,8 +81,26 @@ GRANT EXECUTE ON FUNCTION public.is_my_store_order(BIGINT) TO authenticated, ano
 
 -- ---------------------------------------------------
 -- 3. SELECT: manager apne stores ke orders dekh sake
---    (existing public SELECT policy intact rehti hai — ye ADD hai)
+--    Existing broad public orders policy ko neeche replace kiya gaya hai;
+--    warna permissive RLS policy is isolation ko override kar deti.
 -- ---------------------------------------------------
+DROP POLICY IF EXISTS "Allow public access on orders" ON public.orders;
+DROP POLICY IF EXISTS "Customers read own orders" ON public.orders;
+DROP POLICY IF EXISTS "Delivery partners read assigned orders" ON public.orders;
+DROP POLICY IF EXISTS "Admins read all orders" ON public.orders;
+
+CREATE POLICY "Customers read own orders" ON public.orders
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Delivery partners read assigned orders" ON public.orders
+  FOR SELECT TO authenticated
+  USING (delivery_boy_id = auth.uid()::text);
+
+CREATE POLICY "Admins read all orders" ON public.orders
+  FOR SELECT TO authenticated
+  USING (public.is_admin());
+
 DROP POLICY IF EXISTS "Store managers read own-store orders" ON public.orders;
 CREATE POLICY "Store managers read own-store orders" ON public.orders
   FOR SELECT TO authenticated
@@ -120,6 +138,12 @@ CREATE POLICY "Store managers pack own-store orders" ON public.orders
     public.is_store_manager()
     AND public.is_my_store_order(store_id)
   );
+
+DROP POLICY IF EXISTS "Customers update own orders" ON public.orders;
+CREATE POLICY "Customers update own orders" ON public.orders
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
 
 -- ---------------------------------------------------
 -- 5. INSERT/DELETE: manager ko order create/delete NAHI (least privilege)
