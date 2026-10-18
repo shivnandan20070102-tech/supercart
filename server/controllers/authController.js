@@ -167,13 +167,30 @@ export const createStoreManager = async (req, res) => {
       });
     }
 
-    const { data: adminProfile, error: adminProfileError } = await supabase
+    const { data: adminProfileById, error: adminProfileByIdError } = await supabase
       .from('users')
       .select('role')
       .eq('id', req.user.id)
       .maybeSingle();
-    if (adminProfileError) throw adminProfileError;
-    if (String(adminProfile?.role || '').toLowerCase() !== 'admin') {
+    if (adminProfileByIdError) throw adminProfileByIdError;
+
+    // Older admin accounts can have a profile row keyed by email rather than
+    // the Supabase Auth user id. Keep the authorization check strict, but
+    // support that existing data shape as the admin panel does.
+    let adminProfile = adminProfileById;
+    if (!adminProfile && req.user.email) {
+      const { data: adminProfileByEmail, error: adminProfileByEmailError } = await supabase
+        .from('users')
+        .select('role')
+        .eq('email', String(req.user.email).trim().toLowerCase())
+        .maybeSingle();
+      if (adminProfileByEmailError) throw adminProfileByEmailError;
+      adminProfile = adminProfileByEmail;
+    }
+
+    const authRole = String(req.user.user_metadata?.role || '').trim().toLowerCase();
+    const databaseRole = String(adminProfile?.role || '').trim().toLowerCase();
+    if (authRole !== 'admin' && databaseRole !== 'admin') {
       return res.status(403).json({ success: false, message: 'Only an admin can create store managers.' });
     }
 

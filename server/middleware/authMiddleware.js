@@ -20,6 +20,7 @@ export const protect = async (req, res, next) => {
           id: supabaseUser.id,
           email: supabaseUser.email,
           name: supabaseUser.user_metadata?.full_name || supabaseUser.email,
+          user_metadata: supabaseUser.user_metadata || {},
         };
         return next();
       }
