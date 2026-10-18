@@ -27,7 +27,20 @@ export default function StoreGuard({ children }) {
       if (!active) return;
 
       const isManager = String(profileRow?.role || '').toLowerCase() === 'store_manager';
-      setState({ loading: false, allowed: isManager });
+      let hasActiveStore = false;
+      if (isManager) {
+        const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);
+        const storeIds = (links || []).map((link) => link.store_id).filter(Boolean);
+        if (storeIds.length > 0) {
+          const { data: activeStores } = await supabase
+            .from('stores')
+            .select('id')
+            .in('id', storeIds)
+            .eq('is_active', true);
+          hasActiveStore = Boolean(activeStores?.length);
+        }
+      }
+      setState({ loading: false, allowed: isManager && hasActiveStore });
     };
 
     checkAccess();

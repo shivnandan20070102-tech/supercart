@@ -21,7 +21,12 @@ const StoreLogin = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !active) return;
       const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-      if (active && String(profile?.role || '').toLowerCase() === 'store_manager') {
+      const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);
+      const storeIds = (links || []).map((link) => link.store_id).filter(Boolean);
+      const { data: activeStores } = storeIds.length
+        ? await supabase.from('stores').select('id').in('id', storeIds).eq('is_active', true)
+        : { data: [] };
+      if (active && String(profile?.role || '').toLowerCase() === 'store_manager' && activeStores?.length) {
         navigate('/store/dashboard', { replace: true });
       }
     };
@@ -45,11 +50,16 @@ const StoreLogin = () => {
 
     const { data: { user } } = await supabase.auth.getUser();
     const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-    if (String(profile?.role || '').toLowerCase() === 'store_manager') {
+    const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);
+    const storeIds = (links || []).map((link) => link.store_id).filter(Boolean);
+    const { data: activeStores } = storeIds.length
+      ? await supabase.from('stores').select('id').in('id', storeIds).eq('is_active', true)
+      : { data: [] };
+    if (String(profile?.role || '').toLowerCase() === 'store_manager' && activeStores?.length) {
       navigate('/store/dashboard');
     } else {
       await supabase.auth.signOut();
-      setError('This account is not a store manager. Ask the admin to assign the store_manager role.');
+      setError('This account is not linked to an active store. Ask the admin to assign a store.');
     }
     setLoading(false);
   };

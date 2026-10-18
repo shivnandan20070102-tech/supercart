@@ -310,9 +310,32 @@ const StoresSection = ({ searchQuery = '' }) => {
         return;
       }
 
-      // Step 2: store_staff links saaf karo (FK CASCADE bhi hai, phir bhi explicit)
+      // Step 2: unlink staff and revoke manager access when this was their
+      // only store. Auth users cannot be deleted with the browser anon key,
+      // so removing the store role is what prevents deleted-store login.
+      const { data: staffLinks, error: staffReadError } = await supabase
+        .from('store_staff')
+        .select('user_id')
+        .eq('store_id', store.id);
+      if (staffReadError) throw staffReadError;
       const { error: staffError } = await supabase.from('store_staff').delete().eq('store_id', store.id);
       if (staffError) throw staffError;
+      for (const staff of staffLinks || []) {
+        const { data: remainingLinks, error: remainingError } = await supabase
+          .from('store_staff')
+          .select('id')
+          .eq('user_id', staff.user_id)
+          .limit(1);
+        if (remainingError) throw remainingError;
+        if (!remainingLinks?.length) {
+          const { error: roleError } = await supabase
+            .from('users')
+            .update({ role: 'customer' })
+            .eq('id', staff.user_id)
+            .eq('role', 'store_manager');
+          if (roleError) throw roleError;
+        }
+      }
 
       // Step 3: products unlink — store_id NULL (products delete NAHI honge).
       // (FK ON DELETE SET NULL bhi yehi karega, phir bhi explicit taaki
@@ -389,7 +412,11 @@ const StoresSection = ({ searchQuery = '' }) => {
       if (!userId) throw new Error('Account could not be created. Please try again.');
 
       // Role pakka store_manager (trigger miss ho to bhi)
-      await supabase.from('users').update({ role: 'store_manager', name: managerForm.name.trim() }).eq('id', userId);
+      const { error: profileError } = await supabase
+        .from('users')
+        .update({ role: 'store_manager', name: managerForm.name.trim() })
+        .eq('id', userId);
+      if (profileError) throw profileError;
       await linkStaff(managerModal.id, userId);
 
       const needsConfirm = !data?.session;
