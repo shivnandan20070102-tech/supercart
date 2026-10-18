@@ -401,6 +401,26 @@ export const createOrderApi = async (orderData) => {
 
 export const getMyOrdersApi = async (userId) => {
   const token = localStorage.getItem('supercart_token');
+  // Prefer the authenticated Supabase session so customer RLS can evaluate
+  // auth.uid() correctly. The backend client may use anon mode and cannot
+  // see user-scoped rows after orders isolation is enabled.
+  try {
+    if (userId && userId !== 'guest') {
+      const { data: cloudOrders, error: cloudError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (!cloudError && Array.isArray(cloudOrders)) {
+        return { success: true, data: cloudOrders, source: 'supabase_authenticated' };
+      }
+      if (cloudError) {
+        console.warn('Authenticated Supabase orders fetch failed; trying backend.', cloudError.message);
+      }
+    }
+  } catch (error) {
+    console.warn('Authenticated Supabase orders fetch failed; trying backend.', error);
+  }
   // 1. Try correct backend URLs (both supported, no behaviour change)
   const urlsToTry = [
     `${API_BASE_URL}/api/orders/myorders`,

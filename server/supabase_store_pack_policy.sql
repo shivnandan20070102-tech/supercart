@@ -93,13 +93,30 @@ CREATE POLICY "Customers read own orders" ON public.orders
   FOR SELECT TO authenticated
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Customers create own orders" ON public.orders;
+CREATE POLICY "Customers create own orders" ON public.orders
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
 CREATE POLICY "Delivery partners read assigned orders" ON public.orders
   FOR SELECT TO authenticated
   USING (delivery_boy_id = auth.uid()::text);
 
+DROP POLICY IF EXISTS "Delivery partners update assigned orders" ON public.orders;
+CREATE POLICY "Delivery partners update assigned orders" ON public.orders
+  FOR UPDATE TO authenticated
+  USING (delivery_boy_id = auth.uid()::text)
+  WITH CHECK (delivery_boy_id = auth.uid()::text);
+
 CREATE POLICY "Admins read all orders" ON public.orders
   FOR SELECT TO authenticated
   USING (public.is_admin());
+
+DROP POLICY IF EXISTS "Admins manage all orders" ON public.orders;
+CREATE POLICY "Admins manage all orders" ON public.orders
+  FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Store managers read own-store orders" ON public.orders;
 CREATE POLICY "Store managers read own-store orders" ON public.orders

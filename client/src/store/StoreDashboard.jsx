@@ -435,8 +435,7 @@ const StoreDashboard = () => {
     return () => window.clearInterval(id);
   }, []);
 
-  // Realtime: apne store(s) ka naya/updated order turant list me
-  // + NULL-pool (store_id null) ka INSERT bhi — taaki koi naya order miss na ho.
+  // Realtime: sirf apne linked store(s) ka naya/updated order turant list me.
   useEffect(() => {
     if (storeIds.length === 0) return undefined;
     const filter = storeIds.length === 1 ? `store_id=eq.${storeIds[0]}` : `store_id=in.(${storeIds.join(',')})`;
@@ -453,17 +452,6 @@ const StoreDashboard = () => {
           await loadOrders(storeIds);
         } catch (e) {
           setError(e.message || 'Refresh failed.');
-        }
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async (payload) => {
-        // store_id null wala naya order (legacy/direct-insert) — filtered channel
-        // me nahi aata, isliye yahan pakdo taaki To-Pack me turant dikhe.
-        if (payload?.new?.store_id == null) {
-          playOrderSound();
-          showToast(`New order received! #${payload.new?.id}`);
-          try {
-            await loadOrders(storeIds);
-          } catch { /* next refresh sambhal lega */ }
         }
       })
       .subscribe();
