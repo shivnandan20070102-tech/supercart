@@ -32,7 +32,7 @@ const DeliverySignup = () => {
       email: form.email,
       password: form.password,
       options: {
-        data: { full_name: form.name, phone: form.phone, role: 'delivery', referral_code: form.referralCode.trim().toUpperCase() || null },
+        data: { full_name: form.name, phone: form.phone, role: 'delivery_partner', referral_code: form.referralCode.trim().toUpperCase() || null },
         emailRedirectTo: window.location.origin,
       },
     });

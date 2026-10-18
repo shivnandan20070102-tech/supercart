@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 
-const allowedRoles = new Set(['delivery', 'delivery_partner']);
+const allowedRoles = new Set(['delivery_partner']);
 
 export default function DeliveryGuard({ children }) {
   const [state, setState] = useState({ loading: true, allowed: false, redirect: null });

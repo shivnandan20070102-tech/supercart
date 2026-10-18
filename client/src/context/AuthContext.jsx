@@ -397,7 +397,7 @@ export const AuthProvider = ({ children }) => {
   //    friendly Hindi me map hota hai (generic "Error" kabhi nahi).
   // Backend /api/auth/login limiter direct-API bots ko rokta hai; session
   // yahin Supabase se banta hai taaki complaints/orders fallback na toote.
-  const signInWithEmail = async (email, password) => {
+  const signInWithEmail = async (email, password, expectedRole = '') => {
     const cleanEmail = String(email || '').trim();
     const preBlocked = getLoginBlockState(cleanEmail);
     if (preBlocked.blocked) {
@@ -420,6 +420,21 @@ export const AuthProvider = ({ children }) => {
     }
 
     clearLoginAttempts(cleanEmail);
+    if (expectedRole) {
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', data.user.id)
+        .maybeSingle();
+      const actualRole = String(profile?.role || '').trim().toLowerCase();
+      if (profileError || actualRole !== expectedRole) {
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          message: `This account is not valid for the ${expectedRole === 'customer' ? 'User' : expectedRole === 'delivery_partner' ? 'Delivery' : 'Store'} Panel.`,
+        };
+      }
+    }
     const activeUser = saveSupabaseUser(data.user, 'email');
     if (data.session?.access_token) localStorage.setItem('supercart_token', data.session.access_token);
     return { success: true, user: activeUser };

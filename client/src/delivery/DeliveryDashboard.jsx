@@ -38,7 +38,7 @@ const normalizeInstructions = (value) => {
   return [];
 };
 
-const deliveryRoles = ['delivery_partner', 'delivery'];
+const deliveryRoles = ['delivery_partner'];
 
 // Siren "suna hua" registry — kaunsa assignment popup is device par pehle
 // khul chuka hai. Phone pocket/screen-off me assignment miss ho jaye to agli

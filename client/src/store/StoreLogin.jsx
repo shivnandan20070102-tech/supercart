@@ -41,7 +41,7 @@ const StoreLogin = () => {
     setError('');
     setLoading(true);
 
-    const result = await signInWithEmail(form.email.trim(), form.password);
+    const result = await signInWithEmail(form.email.trim(), form.password, 'store_manager');
     if (!result.success) {
       setError(result.message || 'Login failed.');
       setLoading(false);

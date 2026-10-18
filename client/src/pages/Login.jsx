@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { isRateLimitMessage } from '../utils/rateLimit';
+import { supabase } from '../config/supabase';
 
 // Google G Logo SVG Component
 const GoogleIcon = () => (
@@ -43,7 +44,25 @@ const Login = () => {
   // OAuth ke baad `/` par session ban chuka ho aur user phir /login khole
   // (ya Site URL /login ho) to form mat dikhao — seedha home bhejo.
   useEffect(() => {
-    if (!authLoading && user) navigate('/', { replace: true });
+    if (authLoading || !user) return;
+    let active = true;
+    const redirectCustomer = async () => {
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (!active) return;
+      if (!error && String(profile?.role || '').toLowerCase() === 'customer') {
+        navigate('/', { replace: true });
+      } else {
+        await supabase.auth.signOut();
+      }
+    };
+    redirectCustomer();
+    return () => {
+      active = false;
+    };
   }, [authLoading, user, navigate]);
 
   const handleChange = (e) => {
@@ -70,7 +89,7 @@ const Login = () => {
 
     try {
       if (isLogin) {
-        const res = await signInWithEmail(formData.email, formData.password);
+        const res = await signInWithEmail(formData.email, formData.password, 'customer');
         if (res.success) {
           setMessage(`Welcome back, ${res.user?.name || formData.email}! Logged in successfully.`);
           setTimeout(() => navigate('/'), 1200);
