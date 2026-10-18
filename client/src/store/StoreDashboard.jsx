@@ -26,6 +26,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { markOrderPackedApi } from '../services/api';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import BarcodeField from '../components/BarcodeField';
 import { barcodesMatch } from '../utils/barcodeVerify';
 import ComplaintForm from '../components/ComplaintForm';
 import { buildProductPayload, canManageProduct } from './storeProductAccess';
@@ -214,7 +215,8 @@ const StoreDashboard = () => {
   const [updatingStockId, setUpdatingStockId] = useState(null);
   const [stockDrafts, setStockDrafts] = useState({}); // productId -> typed input string
   // Product FULL CONTROL (Add/Edit/Delete) — sirf apne store ke products.
-  const emptyManagedProduct = { name: '', category: '', unit: '', price: '', original_price: '', description: '', image: '', stock_quantity: 50, low_stock_threshold: 5, store_id: '' };
+  const emptyManagedProduct = { name: '', category: '', unit: '', price: '', original_price: '', description: '', image: '', barcode_number: '', stock_quantity: 50, low_stock_threshold: 5, store_id: '' };
+  const [categories, setCategories] = useState([]);
   const [productModal, setProductModal] = useState(null); // null | { mode: 'add' } | { mode: 'edit', product }
   const [productForm, setProductForm] = useState(emptyManagedProduct);
   const [productImageFile, setProductImageFile] = useState(null);
@@ -343,15 +345,15 @@ const StoreDashboard = () => {
     try {
       const res = await supabase
         .from('products')
-        .select('id,name,image,unit,stock_quantity,low_stock_threshold,is_in_stock,store_id')
+        .select('id,name,category,image,barcode_number,unit,stock_quantity,low_stock_threshold,is_in_stock,store_id')
         .order('name', { ascending: true });
       if (res.error) throw res.error;
       rows = res.data;
     } catch (e) {
-      if (!/stock_quantity|column|schema cache/i.test(e?.message || '')) throw e;
+      if (!/stock_quantity|barcode_number|column|schema cache/i.test(e?.message || '')) throw e;
       const res = await supabase
         .from('products')
-        .select('id,name,image,unit,stock,in_stock,store_id')
+        .select('id,name,category,image,unit,stock,in_stock,store_id')
         .order('name', { ascending: true });
       if (res.error) throw res.error;
       rows = res.data;
@@ -359,6 +361,8 @@ const StoreDashboard = () => {
     setStoreProducts(
       (rows || []).filter((p) => p.store_id == null || list.includes(Number(p.store_id))),
     );
+    setCategories([...new Set((rows || []).map((p) => String(p.category || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b)));
   }, []);
 
   // Init: role check -> store_staff link -> stores -> orders
@@ -541,8 +545,8 @@ const StoreDashboard = () => {
       setError('Enter a valid quantity (0 or more).');
       return;
     }
-    // Stock edit bhi sirf apne store ke products par.
-    if (!canManageProduct(product, storeIds)) {
+    const isGlobalProduct = product?.store_id == null || product?.store_id === '';
+    if (!isGlobalProduct && !canManageProduct(product, storeIds)) {
       setError('You can only update stock of your own store products.');
       return;
     }
@@ -552,10 +556,15 @@ const StoreDashboard = () => {
     try {
       let updError = null;
       try {
-        const res = await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
+        const res = isGlobalProduct
+          ? await supabase.rpc('update_product_stock_for_store_manager', {
+            p_product_id: product.id,
+            p_stock_quantity: qty,
+          })
+          : await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
         updError = res.error;
         // Naye columns abhi bane na hon to purane `stock` par likho.
-        if (updError && /stock_quantity|column|schema cache/i.test(updError.message || '')) {
+        if (!isGlobalProduct && updError && /stock_quantity|column|schema cache/i.test(updError.message || '')) {
           const retry = await supabase.from('products').update({ stock: qty }).eq('id', product.id);
           updError = retry.error;
         }
@@ -615,6 +624,7 @@ const StoreDashboard = () => {
       image: product.image || '',
       stock_quantity: product.stock_quantity ?? product.stock ?? 0,
       low_stock_threshold: product.low_stock_threshold ?? 5,
+      barcode_number: product.barcode_number || '',
       store_id: String(product.store_id ?? ''),
     });
     setProductImageFile(null);
@@ -1034,6 +1044,7 @@ const StoreDashboard = () => {
                 // FULL CONTROL sirf apne store ke products par (global/doosre
                 // store wale read-only). RLS bhi yehi enforce karta hai.
                 const manageable = canManageProduct(p, storeIds);
+                const stockManageable = manageable || p.store_id == null;
                 return (
                   <li
                     key={p.id}
@@ -1113,14 +1124,14 @@ const StoreDashboard = () => {
                     </div>
                     {!manageable && (
                       <p className="border-t border-slate-800 px-4 py-2 text-[11px] font-bold text-slate-500">
-                        Global product — only Admin can edit. Stock shown read-only.
+                        Global product — name, price and image are Admin-controlled. Stock can be updated for your store.
                       </p>
                     )}
                     <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3">
                       <button
                         type="button"
                         aria-label={`Decrease stock of ${p.name}`}
-                        disabled={busy || !manageable || qty <= 0}
+                        disabled={busy || !stockManageable || qty <= 0}
                         onClick={() => bumpStock(p, -1)}
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -1131,7 +1142,7 @@ const StoreDashboard = () => {
                         min="0"
                         inputMode="numeric"
                         aria-label={`Exact stock quantity for ${p.name}`}
-                        disabled={busy || !manageable}
+                        disabled={busy || !stockManageable}
                         value={draft !== undefined ? draft : String(qty)}
                         onChange={(e) => setStockDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveDraftStock(p); }}
@@ -1140,7 +1151,7 @@ const StoreDashboard = () => {
                       <button
                         type="button"
                         aria-label={`Increase stock of ${p.name}`}
-                        disabled={busy || !manageable}
+                        disabled={busy || !stockManageable}
                         onClick={() => bumpStock(p, 1)}
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white transition hover:bg-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -1429,7 +1440,26 @@ const StoreDashboard = () => {
                 </select>
               </label>
             )}
-            {['name', 'category', 'unit', 'description'].map((field) => (
+            <input
+              required
+              value={productForm.name}
+              onChange={(event) => setProductForm({ ...productForm, name: event.target.value })}
+              placeholder="name"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
+            />
+            <label className="text-xs font-bold text-slate-400">
+              Category *
+              <select
+                required
+                value={productForm.category}
+                onChange={(event) => setProductForm({ ...productForm, category: event.target.value })}
+                className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500"
+              >
+                <option value="">Select category…</option>
+                {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+            </label>
+            {['unit', 'description'].map((field) => (
               <input
                 key={field}
                 required
@@ -1476,20 +1506,30 @@ const StoreDashboard = () => {
               title="Is number se kam hone par Low Stock alert"
               className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
             />
-            <label className="flex items-center gap-2 text-xs text-slate-400 sm:col-span-2">
-              <ImagePlus className="h-4 w-4 shrink-0 text-emerald-400" /> Image {productModal.mode === 'add' ? '*' : '(badlne ke liye nayi file chuno)'}
-              <input
-                required={productModal.mode === 'add' && !productForm.image}
-                type="file"
-                accept="image/*"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  setProductImageFile(file || null);
-                  setProductImagePreview(file ? URL.createObjectURL(file) : (productForm.image || ''));
-                }}
-                className="text-slate-300"
+            <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+              <label className="flex min-h-[76px] items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-slate-400">
+                <ImagePlus className="h-4 w-4 shrink-0 text-emerald-400" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-black text-slate-200">Image {productModal.mode === 'add' ? '*' : '(optional)'}</span>
+                  <input
+                    required={productModal.mode === 'add' && !productForm.image}
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      setProductImageFile(file || null);
+                      setProductImagePreview(file ? URL.createObjectURL(file) : (productForm.image || ''));
+                    }}
+                    className="mt-1.5 max-w-full text-slate-300"
+                  />
+                </span>
+              </label>
+              <BarcodeField
+                value={productForm.barcode_number}
+                onChange={(value) => setProductForm({ ...productForm, barcode_number: value })}
+                className="sm:col-span-1"
               />
-            </label>
+            </div>
             {productImagePreview && (
               <img src={productImagePreview} alt="Preview" className="h-20 w-20 rounded-xl bg-slate-800 object-contain" />
             )}

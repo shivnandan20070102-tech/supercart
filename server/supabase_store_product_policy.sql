@@ -73,6 +73,45 @@ CREATE POLICY "Store managers delete own-store products" ON public.products
   FOR DELETE TO authenticated
   USING (public.is_store_manager_of(store_id));
 
+-- Global products remain read-only for name/price/image, but a store manager
+-- may update only their stock through this narrow SECURITY DEFINER RPC.
+CREATE OR REPLACE FUNCTION public.update_product_stock_for_store_manager(
+  p_product_id BIGINT,
+  p_stock_quantity INTEGER
+)
+RETURNS public.products
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  updated_product public.products;
+BEGIN
+  IF p_stock_quantity < 0 THEN
+    RAISE EXCEPTION 'Stock quantity cannot be negative';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.products AS p
+    WHERE p.id = p_product_id
+      AND (p.store_id IS NULL OR public.is_store_manager_of(p.store_id))
+  ) THEN
+    RAISE EXCEPTION 'Product is not available to this store manager';
+  END IF;
+
+  UPDATE public.products
+  SET stock_quantity = p_stock_quantity
+  WHERE id = p_product_id
+  RETURNING * INTO updated_product;
+
+  RETURN updated_product;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_product_stock_for_store_manager(BIGINT, INTEGER)
+  TO authenticated;
+
 -- 4. Public read pehle jaisa (customer/store/admin sab padhte rahenge).
 -- (Policy "Allow public read on products" pehle se hai — yahan sirf ensure.)
 DO $$
