@@ -364,7 +364,7 @@ export function unlockAllOrderAudio() {
 }
 
 export function playDeliveryAlertSound(mode = 'Default') {
-  if (mode === 'Default') {
+  if (mode === 'Default' || mode === 'Bell') {
     try {
       if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
       if (!deliveryAlertAudio) {

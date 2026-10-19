@@ -32,7 +32,6 @@ const DeliveryProfile = lazy(() => import('./delivery/DeliveryProfile'));
 const DeliveryGuard = lazy(() => import('./delivery/DeliveryGuard'));
 const DeliveryActivity = lazy(() => import('./delivery/DeliveryActivity'));
 const DeliveryOrderDetail = lazy(() => import('./delivery/DeliveryOrderDetail'));
-const DeliverySupportTickets = lazy(() => import('./delivery/DeliverySupportTickets'));
 const DeliveryComplaints = lazy(() => import('./delivery/DeliveryComplaints'));
 const StoreLogin = lazy(() => import('./store/StoreLogin'));
 const StoreDashboard = lazy(() => import('./store/StoreDashboard'));
@@ -135,7 +134,6 @@ function App() {
               <Route path="/delivery/activity/:type" element={<DeliveryGuard><DeliveryActivity /></DeliveryGuard>} />
               <Route path="/delivery/order/:id" element={<DeliveryGuard><DeliveryOrderDetail /></DeliveryGuard>} />
               <Route path="/delivery/help" element={<DeliveryGuard><DeliveryHelp /></DeliveryGuard>} />
-              <Route path="/delivery/support-tickets" element={<DeliveryGuard><DeliverySupportTickets /></DeliveryGuard>} />
               <Route path="/delivery/complaints" element={<DeliveryGuard><DeliveryComplaints /></DeliveryGuard>} />
               <Route path="/delivery/dashboard" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
               <Route path="/delivery" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
