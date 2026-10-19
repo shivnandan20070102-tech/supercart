@@ -206,6 +206,7 @@ export function notifyAdminNewOrder({ orderId, total } = {}) {
 //   - stopDeliverySiren() idempotent hai — kahin se bhi safe call.
 
 let sirenAudio = null;
+let deliveryAlertAudio = null;
 let sirenOrderKey = null;
 let sirenBlocked = false;
 let sirenUnlockListeners = null;
@@ -363,6 +364,30 @@ export function unlockAllOrderAudio() {
 }
 
 export function playDeliveryAlertSound(mode = 'Default') {
+  if (mode === 'Default') {
+    try {
+      if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
+      if (!deliveryAlertAudio) {
+        deliveryAlertAudio = new Audio(DELIVERY_SIREN_SRC);
+        deliveryAlertAudio.preload = 'auto';
+        deliveryAlertAudio.volume = 0.9;
+      }
+      deliveryAlertAudio.currentTime = 0;
+      const result = deliveryAlertAudio.play();
+      if (result && typeof result.catch === 'function') {
+        result.catch((err) => {
+          try {
+            console.warn('[deliveryAlertSound] play failed:', err?.name || err?.message || err);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+    } catch {
+      /* browser audio is optional and may be unavailable */
+    }
+    return;
+  }
   if (mode === 'Vibrate only') {
     try {
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([180, 100, 180]);
@@ -371,7 +396,6 @@ export function playDeliveryAlertSound(mode = 'Default') {
     }
     return;
   }
-  if (mode === 'Default') return;
   try {
     if (typeof window === 'undefined') return;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;

@@ -74,6 +74,7 @@ const DeliveryProfile = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState({ type: '', text: '' });
+  const [approvalStatus, setApprovalStatus] = useState('pending');
   const [activity, setActivity] = useState({ gigs: 0, trips: 0, offers: 0 });
   const [referralCode, setReferralCode] = useState('');
   const [referralMessage, setReferralMessage] = useState('');
@@ -110,6 +111,7 @@ const DeliveryProfile = () => {
       const activeOffers = (offerRows || []).filter((offer) => !offer.expires_at || new Date(offer.expires_at) > new Date());
       if (!mounted) return;
       setUser(current);
+      setApprovalStatus(String(profile?.approval_status || 'pending').toLowerCase());
       // Pehli baar setup (profile_completed !== true) → Home Area step dikhega.
       // Approve ke baad ka Profile page → section hidden rahega.
       if (mounted) setIsFirstSetup(profile?.profile_completed !== true);
@@ -304,7 +306,17 @@ const DeliveryProfile = () => {
       const profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
       const urls = {};
       for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
-      const payload = { user_id: user.id, ...form, referral_code: referralCode, settings, profile_photo_url: profilePhotoUrl, ...urls, profile_completed: true, approval_status: 'pending', rejection_reason: null };
+      const approvalRequested = isFirstSetup || Object.keys(files).length > 0;
+      const payload = {
+        user_id: user.id,
+        ...form,
+        referral_code: referralCode,
+        settings,
+        profile_photo_url: profilePhotoUrl,
+        ...urls,
+        profile_completed: true,
+        ...(approvalRequested ? { approval_status: 'pending', rejection_reason: null } : { approval_status: approvalStatus }),
+      };
       if (finalHomeStoreId != null) payload.home_store_id = finalHomeStoreId;
       const { error } = await supabase.from('delivery_profiles').upsert(payload, { onConflict: 'user_id' });
       if (error) throw error;
@@ -312,20 +324,39 @@ const DeliveryProfile = () => {
       setSavedFiles(urls);
       setProfilePhoto(null);
       setFiles({});
-      setNotice({ type: 'success', text: 'Profile saved. Your application has been sent for approval.' });
-      window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 900);
+      if (approvalRequested) {
+        setApprovalStatus('pending');
+        setNotice({ type: 'success', text: 'Profile saved. Your application has been sent for approval.' });
+        window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 900);
+      } else {
+        setNotice({ type: 'success', text: 'Profile saved successfully.' });
+      }
     } catch (error) {
       // home_store_id column abhi Supabase me na bani ho (SQL pending) to
       // profile save hona na ruke — bina home store ke save karo, Admin
       // baad me Home Store set kar dega.
       if (/home_store_id|schema cache|column/i.test(error?.message || '')) {
         try {
-          const retryPayload = { user_id: user.id, ...form, referral_code: referralCode, settings, profile_photo_url: profilePhotoPreview, profile_completed: true, approval_status: 'pending', rejection_reason: null };
+          const approvalRequested = isFirstSetup || Object.keys(files).length > 0;
+          const retryPayload = {
+            user_id: user.id,
+            ...form,
+            referral_code: referralCode,
+            settings,
+            profile_photo_url: profilePhotoPreview,
+            profile_completed: true,
+            ...(approvalRequested ? { approval_status: 'pending', rejection_reason: null } : { approval_status: approvalStatus }),
+          };
           delete retryPayload.home_store_id;
           const retry = await supabase.from('delivery_profiles').upsert(retryPayload, { onConflict: 'user_id' });
           if (retry.error) throw retry.error;
-          setNotice({ type: 'error', text: 'Profile saved, but Home Store was not saved — run server/supabase_delivery_home_store.sql in Supabase, then pin your area again.' });
-          window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 2500);
+          if (approvalRequested) {
+            setApprovalStatus('pending');
+            setNotice({ type: 'error', text: 'Profile saved, but Home Store was not saved — run server/supabase_delivery_home_store.sql in Supabase, then pin your area again.' });
+            window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 2500);
+          } else {
+            setNotice({ type: 'error', text: 'Profile saved, but Home Store was not saved — run server/supabase_delivery_home_store.sql in Supabase, then pin your area again.' });
+          }
           return;
         } catch (retryError) {
           setNotice({ type: 'error', text: retryError.message || 'Could not save profile.' });
