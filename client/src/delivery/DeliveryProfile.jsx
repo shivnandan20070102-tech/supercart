@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ChevronDown, Crosshair, FileText, Flag, LoaderCircle, MapPin, Save, Settings, ShieldCheck, Upload, UserRound, BriefcaseBusiness, Route, Gift, Copy, Share2, CircleHelp, Headphones, TicketCheck, LogOut, Wallet } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
+import { playDeliveryAlertSound } from '../utils/orderSound';
 import { SignedDocImage, SignedDocLink } from '../components/SignedDoc';
 import StoreMapPicker from '../admin/StoreMapPicker';
 
@@ -92,8 +93,6 @@ const DeliveryProfile = () => {
   const [settings, setSettings] = useState({
     darkTheme: true,
     appLanguage: 'English',
-    audioLanguage: 'English',
-    supportLanguage: 'English',
     orderAlertSound: 'Default',
   });
 
@@ -138,7 +137,11 @@ const DeliveryProfile = () => {
       }
       setActivity({ trips: trips || 0, gigs: gigs || 0, offers: activeOffers.length });
       const savedSettings = profile?.settings && typeof profile.settings === 'object' ? profile.settings : {};
-      const nextSettings = { ...settings, ...savedSettings };
+      const nextSettings = {
+        darkTheme: savedSettings.darkTheme !== false,
+        appLanguage: savedSettings.appLanguage || 'English',
+        orderAlertSound: savedSettings.orderAlertSound || 'Default',
+      };
       setSettings(nextSettings);
       document.documentElement.classList.toggle('dark', Boolean(nextSettings.darkTheme));
       const savedReferralCode = profile?.referral_code || `SC${current.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
@@ -339,6 +342,7 @@ const DeliveryProfile = () => {
     const next = { ...settings, [key]: value };
     setSettings(next);
     if (key === 'darkTheme') document.documentElement.classList.toggle('dark', value);
+    if (key === 'orderAlertSound') playDeliveryAlertSound(value);
   };
 
   const saveSettings = async () => {
@@ -403,7 +407,7 @@ const DeliveryProfile = () => {
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-emerald-300"><LoaderCircle className="h-6 w-6 animate-spin" /></div>;
 
-  return <div className="min-h-screen bg-slate-950 px-4 py-8 text-white sm:px-8"><div className="mx-auto max-w-4xl">
+  return <div className={`delivery-profile min-h-screen px-4 py-8 sm:px-8 ${settings.darkTheme ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'}`}><div className="mx-auto max-w-4xl">
     <header className="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">SuperCart Delivery</p><h1 className="mt-2 text-3xl font-black">Delivery Profile</h1></div><div className="flex flex-wrap items-center gap-2"><Link to="/delivery" className="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-bold text-slate-300 hover:border-emerald-500 hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to orders</Link><button type="button" onClick={logout} className="flex items-center gap-2 rounded-xl border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm font-bold text-rose-300 hover:bg-rose-900 hover:text-white"><LogOut className="h-4 w-4" /> Logout</button></div></header>
     {notice.text && <div className={`mb-5 flex items-center gap-2 rounded-xl p-3 text-sm font-bold ${notice.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>{notice.type === 'success' && <CheckCircle2 className="h-4 w-4" />}{notice.text}</div>}
     <AccordionSection id="activity" title="Activity & Earnings" icon={Wallet} openSection={openSection} setOpenSection={setOpenSection}>
@@ -455,9 +459,7 @@ const DeliveryProfile = () => {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex min-h-12 items-center justify-between rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm font-bold"><span>Dark Theme</span><button type="button" role="switch" aria-checked={settings.darkTheme} onClick={() => updateSetting('darkTheme', !settings.darkTheme)} className={`relative h-6 w-11 rounded-full transition ${settings.darkTheme ? 'bg-emerald-500' : 'bg-slate-600'}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${settings.darkTheme ? 'left-6' : 'left-1'}`} /></button></label>
         {[
-          ['appLanguage', 'App Language', ['English']],
-          ['audioLanguage', 'Audio Language', ['English']],
-          ['supportLanguage', 'Support Language', ['English']],
+          ['appLanguage', 'App Language', ['English', 'Hindi', 'Hinglish', 'Bengali', 'Marathi', 'Telugu', 'Tamil', 'Gujarati', 'Kannada', 'Malayalam', 'Punjabi', 'Urdu']],
           ['orderAlertSound', 'Order Alert Sound', ['Default', 'Chime', 'Bell', 'Vibrate only']],
         ].map(([key, label, options]) => (
           <label key={key} className="rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm font-bold">{label}<select value={settings[key]} onChange={(event) => updateSetting(key, event.target.value)} className="mt-2 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm font-normal text-white outline-none focus:border-emerald-500">{options.map((option) => <option key={option}>{option}</option>)}</select></label>

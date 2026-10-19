@@ -380,7 +380,9 @@ const AdminDashboard = () => {
   const filteredOrders = q ? orders.filter((order) => { const items = order.order_items || order.orderItems || []; const itemsText = items.map((i) => `${i.name || ''} ${i.productId || i.id || ''}`).join(' '); const addr = order.shipping_address || order.shippingAddress || {}; const hay = [String(order.id), order.status, order.payment_method || order.paymentMethod, order.user_id || order.userId, order.delivery_boy_id, String(order.total_price ?? order.totalPrice ?? ''), itemsText, addr.address, addr.label, addr.city, addr.phone].filter(Boolean).join(' ').toLowerCase(); return hay.includes(q); }) : orders;
   const filteredUsers = q ? users.filter((item) => [item.name, item.email, item.phone, item.role, item.location, String(item.id)].filter(Boolean).join(' ').toLowerCase().includes(q)) : users;
   const filteredDeliveryBoys = q ? deliveryBoys.filter((boy) => [boy.name, boy.email, boy.phone, String(boy.id)].filter(Boolean).join(' ').toLowerCase().includes(q)) : deliveryBoys;
-  const profileCandidates = active === 'deliveryProfiles' ? deliveryProfiles.filter((p) => String(p.approval_status || 'pending').toLowerCase() === 'pending' && p.profile_completed === true) : deliveryProfiles;
+  const profileCandidates = active === 'deliveryProfiles'
+    ? deliveryProfiles.filter((p) => String(p.approval_status || 'pending').toLowerCase() === 'pending')
+    : deliveryProfiles;
   const filteredDeliveryProfiles = q ? profileCandidates.filter((p) => [p.name, p.email, p.phone, p.user_id].filter(Boolean).join(' ').toLowerCase().includes(q)) : profileCandidates;
   const deliveryProfileByUser = new Map(deliveryProfiles.map((profile) => [profile.user_id, profile]));
   const filteredCoupons = q ? coupons.filter((c) => [c.code, c.discount_type, String(c.discount_value), String(c.min_order_amount), c.expiry_date, String(c.id)].filter(Boolean).join(' ').toLowerCase().includes(q)) : coupons;

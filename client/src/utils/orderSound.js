@@ -354,10 +354,44 @@ export function unlockAllOrderAudio() {
   } catch {
     /* ignore */
   }
+
   try {
     unlockDeliverySiren();
   } catch {
     /* ignore */
+  }
+}
+
+export function playDeliveryAlertSound(mode = 'Default') {
+  if (mode === 'Vibrate only') {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([180, 100, 180]);
+    } catch {
+      /* vibration is optional */
+    }
+    return;
+  }
+  if (mode === 'Default') return;
+  try {
+    if (typeof window === 'undefined') return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = mode === 'Bell' ? 'sine' : 'triangle';
+    oscillator.frequency.setValueAtTime(mode === 'Bell' ? 880 : 660, context.currentTime);
+    if (mode === 'Bell') oscillator.frequency.exponentialRampToValueAtTime(1320, context.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.35, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.45);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.5);
+    oscillator.addEventListener('ended', () => context.close().catch(() => {}), { once: true });
+  } catch {
+    /* browser audio is optional and may be unavailable */
   }
 }
 

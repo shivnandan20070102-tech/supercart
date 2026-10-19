@@ -3,7 +3,7 @@ import { Bell, BellOff, BriefcaseBusiness, Check, CircleHelp, ClipboardList, Doo
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
-import { getDeliverySirenState, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
+import { getDeliverySirenState, playDeliveryAlertSound, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
 import { triggerDeliveredInvoiceEmail } from '../services/invoice';
 
@@ -75,7 +75,7 @@ const ACCEPT_WINDOW_MS = 10000;
  * siren start, unmount par stop. Purane orders (initial load) `alert=false`
  * ke saath khulte hain — bina siren.
  */
-const NewOrderPopup = ({ orderNumber, customerName, addressLine, busy, alert, acceptLabel, rejectLabel, newOrderLabel, secondsRemainingLabel, respondFastLabel, onAccept, onReject, onTimeout }) => {
+const NewOrderPopup = ({ orderNumber, customerName, addressLine, busy, alert, alertSound = 'Default', acceptLabel, rejectLabel, newOrderLabel, secondsRemainingLabel, respondFastLabel, onAccept, onReject, onTimeout }) => {
   const [remaining, setRemaining] = React.useState(ACCEPT_WINDOW_MS);
   const [sirenState, setSirenState] = React.useState('stopped');
   const onTimeoutRef = React.useRef(onTimeout);
@@ -97,7 +97,8 @@ const NewOrderPopup = ({ orderNumber, customerName, addressLine, busy, alert, ac
     try {
       console.info(`[deliverySiren] popup mount order=${orderNumber} alert=${alert} — auto-start`);
     } catch { /* ignore */ }
-    startDeliverySiren(orderNumber);
+    if (alertSound === 'Default') startDeliverySiren(orderNumber);
+    else playDeliveryAlertSound(alertSound);
     setSirenState(getDeliverySirenState());
     const t1 = window.setTimeout(() => setSirenState(getDeliverySirenState()), 400);
     const t2 = window.setTimeout(() => setSirenState(getDeliverySirenState()), 1200);
@@ -105,14 +106,18 @@ const NewOrderPopup = ({ orderNumber, customerName, addressLine, busy, alert, ac
     // tab tak har 1.2s me (policy allow hote hi awaz shuru, bina tap ke).
     const retry = window.setInterval(() => {
       try {
-        if (getDeliverySirenState() !== 'playing') resumeDeliverySiren();
+        if (alertSound === 'Default') {
+          if (getDeliverySirenState() !== 'playing') resumeDeliverySiren();
+        } else {
+          playDeliveryAlertSound(alertSound);
+        }
         setSirenState(getDeliverySirenState());
       } catch { /* ignore */ }
     }, 1200);
     const onVis = () => {
       try {
         if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-          if (getDeliverySirenState() !== 'playing') resumeDeliverySiren();
+          if (alertSound === 'Default' && getDeliverySirenState() !== 'playing') resumeDeliverySiren();
           setSirenState(getDeliverySirenState());
         }
       } catch { /* ignore */ }
@@ -129,7 +134,7 @@ const NewOrderPopup = ({ orderNumber, customerName, addressLine, busy, alert, ac
       } catch { /* ignore */ }
       stopDeliverySiren();
     };
-  }, [orderNumber, alert]);
+  }, [alertSound, orderNumber, alert]);
 
   React.useEffect(() => {
     firedRef.current = false;
@@ -295,6 +300,7 @@ const DeliveryDashboard = () => {
   const [isOnline, setIsOnline] = useState(null); // null = abhi load ho raha
   const [toggling, setToggling] = useState(false);
   const [photoUrl, setPhotoUrl] = useState('');
+  const [alertSound, setAlertSound] = useState('Default');
   // Partner ka Home Store (delivery_profiles.home_store_id) — "Go to Store"
   // button isi store ka Google Maps route kholta hai, kisi aur ka nahi.
   const [homeStoreId, setHomeStoreId] = useState(null);
@@ -394,7 +400,7 @@ const DeliveryDashboard = () => {
           try {
             const full = await supabase
               .from('delivery_profiles')
-              .select('is_available, profile_photo_url, home_store_id')
+              .select('is_available, profile_photo_url, home_store_id, settings')
               .eq('user_id', current.id)
               .maybeSingle();
             if (!full.error) {
@@ -413,6 +419,7 @@ const DeliveryDashboard = () => {
           if (mounted && availRow) {
             if (typeof availRow.is_available === 'boolean') setIsOnline(availRow.is_available);
             if (availRow.profile_photo_url) setPhotoUrl(availRow.profile_photo_url);
+            if (availRow.settings?.orderAlertSound) setAlertSound(availRow.settings.orderAlertSound);
             // Column SQL se pehle na bani ho to home_store_id undefined — tab null.
             if (availRow.home_store_id != null) setHomeStoreId(Number(availRow.home_store_id));
           }
@@ -888,15 +895,33 @@ const DeliveryDashboard = () => {
     }
   };
 
-  // Step 2: popup card ke andar wala "Go to Store" — exact lat,lng se Google
-  // Maps directions (comma-separated, koi space nahi; origin Google Maps khud lega).
-  const openStoreDirections = () => {
-    if (!storePopup) return;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${storePopup.lat},${storePopup.lng}`;
+  // Open the linked Home Store directly on the first tap using its exact
+  // coordinates. A blank tab is opened before the async query to avoid
+  // mobile browser popup blockers.
+  const openStoreDirections = async () => {
+    const hid = homeStoreId != null ? Number(homeStoreId) : null;
+    if (hid == null || Number.isNaN(hid)) {
+      showToast('Your Home Store is not set yet. Please contact Admin.');
+      return;
+    }
+    const mapWindow = window.open('', '_blank');
     try {
-      console.info('[GoToStore] opening directions:', url);
-    } catch { /* ignore */ }
-    window.open(url, '_blank', 'noopener,noreferrer');
+      const { data: store, error } = await supabase
+        .from('stores')
+        .select('latitude, longitude')
+        .eq('id', hid)
+        .maybeSingle();
+      if (error) throw error;
+      const lat = Number(store?.latitude);
+      const lng = Number(store?.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('Invalid store coordinates');
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+      if (mapWindow) mapWindow.location.href = url;
+      else window.location.href = url;
+    } catch {
+      if (mapWindow) mapWindow.close();
+      showToast('Home Store location not found. Please contact Admin.');
+    }
   };
 
   const activeOrders = orders.filter((order) => String(order.status || '').toLowerCase() !== 'delivered');
@@ -1041,7 +1066,7 @@ const DeliveryDashboard = () => {
               type="button"
               title="Go to Store — open your Home Store route"
               aria-label="Go to Store"
-              onClick={openStorePopup}
+              onClick={openStoreDirections}
               disabled={storePopupLoading}
               className="flex h-10 items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-950 px-3 text-xs font-black text-emerald-300 transition hover:bg-emerald-900 disabled:opacity-60"
             >
@@ -1218,6 +1243,7 @@ const DeliveryDashboard = () => {
           addressLine={formatAddress(popupOrder.shipping_address || {})}
           busy={updatingId === popupOrder.id}
           alert={popupAlert}
+          alertSound={alertSound}
           acceptLabel={updatingId === popupOrder.id ? t.accepting : t.accept}
           rejectLabel={updatingId === popupOrder.id ? t.rejecting : t.reject}
           newOrderLabel={t.newDeliveryOrder}
