@@ -207,6 +207,7 @@ export function notifyAdminNewOrder({ orderId, total } = {}) {
 
 let sirenAudio = null;
 let deliveryAlertAudio = null;
+let deliveryAlertContext = null;
 let sirenOrderKey = null;
 let sirenBlocked = false;
 let sirenUnlockListeners = null;
@@ -364,6 +365,7 @@ export function unlockAllOrderAudio() {
 }
 
 export function playDeliveryAlertSound(mode = 'Default') {
+  stopDeliveryAlertSound();
   if (mode === 'Default' || mode === 'Bell') {
     try {
       if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
@@ -401,6 +403,7 @@ export function playDeliveryAlertSound(mode = 'Default') {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     const context = new AudioContextClass();
+    deliveryAlertContext = context;
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     oscillator.type = mode === 'Bell' ? 'sine' : 'triangle';
@@ -416,6 +419,25 @@ export function playDeliveryAlertSound(mode = 'Default') {
     oscillator.addEventListener('ended', () => context.close().catch(() => {}), { once: true });
   } catch {
     /* browser audio is optional and may be unavailable */
+  }
+}
+
+export function stopDeliveryAlertSound() {
+  try {
+    if (deliveryAlertAudio) {
+      deliveryAlertAudio.pause();
+      deliveryAlertAudio.currentTime = 0;
+    }
+  } catch {
+    /* optional preview audio */
+  }
+  try {
+    if (deliveryAlertContext) {
+      deliveryAlertContext.close().catch(() => {});
+      deliveryAlertContext = null;
+    }
+  } catch {
+    /* optional generated audio */
   }
 }
 

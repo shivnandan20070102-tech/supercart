@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ChevronDown, Crosshair, FileText, Flag, LoaderCircle, MapPin, Save, Settings, ShieldCheck, Upload, UserRound, BriefcaseBusiness, Route, Gift, Copy, Share2, CircleHelp, Headphones, LogOut, Wallet } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
-import { playDeliveryAlertSound } from '../utils/orderSound';
+import { playDeliveryAlertSound, stopDeliveryAlertSound } from '../utils/orderSound';
 import { SignedDocImage, SignedDocLink } from '../components/SignedDoc';
 import StoreMapPicker from '../admin/StoreMapPicker';
 
@@ -202,8 +202,8 @@ const DeliveryProfile = () => {
   const uploadFile = async (file, folder, previousUrl) => {
     if (!file) return previousUrl || null;
     const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
-    const path = `${user.id}/${folder}-${Date.now()}.${extension}`;
-    const { error } = await supabase.storage.from('delivery-documents').upload(path, file, { upsert: false, contentType: file.type });
+    const path = `${user.id}/${folder}.${extension}`;
+    const { error } = await supabase.storage.from('delivery-documents').upload(path, file, { upsert: true, contentType: file.type, cacheControl: '3600' });
     if (error) throw error;
     return supabase.storage.from('delivery-documents').getPublicUrl(path).data.publicUrl;
   };
@@ -306,7 +306,7 @@ const DeliveryProfile = () => {
       const profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
       const urls = {};
       for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
-      const approvalRequested = isFirstSetup || Object.keys(files).length > 0;
+      const approvalRequested = isFirstSetup;
       const payload = {
         user_id: user.id,
         ...form,
@@ -337,7 +337,7 @@ const DeliveryProfile = () => {
       // baad me Home Store set kar dega.
       if (/home_store_id|schema cache|column/i.test(error?.message || '')) {
         try {
-          const approvalRequested = isFirstSetup || Object.keys(files).length > 0;
+          const approvalRequested = isFirstSetup;
           const retryPayload = {
             user_id: user.id,
             ...form,
@@ -380,6 +380,7 @@ const DeliveryProfile = () => {
     if (!user) return;
     setSaving(true);
     setNotice({ type: '', text: '' });
+    stopDeliveryAlertSound();
     const { error } = await supabase
       .from('delivery_profiles')
       .update({ settings })
@@ -576,7 +577,7 @@ const DeliveryProfile = () => {
       </section>
       </AccordionSection>
       )}
-      <AccordionSection id="documents" title="Documents" icon={FileText} openSection={openSection} setOpenSection={setOpenSection}>
+      {isFirstSetup && <AccordionSection id="documents" title="Documents" icon={FileText} openSection={openSection} setOpenSection={setOpenSection}>
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6">
         <div className="mb-5 flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
@@ -620,7 +621,7 @@ const DeliveryProfile = () => {
           })}
         </div>
       </section>
-      </AccordionSection>
+      </AccordionSection>}
       <button type="submit" disabled={saving} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3.5 text-sm font-black text-slate-950 hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60"><Save className="h-4 w-4" />{saving ? 'Saving profile...' : 'Save Profile'}</button>
     </form>
   </div></div>;
