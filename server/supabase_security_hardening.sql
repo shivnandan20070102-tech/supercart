@@ -10,6 +10,24 @@ DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
 DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
 DROP POLICY IF EXISTS "Admins manage users" ON public.users;
 
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users
+    WHERE id = auth.uid()
+      AND role = 'admin'
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.current_user_role()
 RETURNS TEXT
 LANGUAGE sql

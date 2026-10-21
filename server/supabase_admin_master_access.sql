@@ -27,11 +27,11 @@ AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.users
     WHERE id = auth.uid() AND role = 'admin'
-  )
-  OR COALESCE((auth.jwt() -> 'user_metadata' ->> 'role'), '') = 'admin';
+  );
 $$;
 
-GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated, anon;
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
 
 -- ---------------------------------------------------
 -- 2. ADMIN FULL READ policies (har table par, idempotent)
