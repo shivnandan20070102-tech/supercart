@@ -18,8 +18,9 @@
 -- - Backend assignment inhe padhkar nearest eligible rider chunta hai.
 -- - Location na ho (permission denied / purana app) to assignment phir bhi
 --   kaam karta hai — existing random rule fallback hai (order kabhi stuck nahi).
--- - Authenticated customers ko rider ki current location read karni hoti hai.
---   is_available/verified ko ye file haath nahi lagati.
+-- - Rider location columns backend service-role se read hoti hain. Direct
+--   public.users SELECT policy intentionally nahi di jaati, taaki users table
+--   ki PII aur live coordinates leak na hon.
 -- ===================================================
 
 ALTER TABLE public.users
@@ -49,9 +50,6 @@ END $$;
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Authenticated users read rider locations" ON public.users;
-CREATE POLICY "Authenticated users read rider locations" ON public.users
-    FOR SELECT TO authenticated
-    USING (role IN ('delivery', 'delivery_partner') OR id = auth.uid());
 
 -- ===================================================
 -- VERIFY (optional, RUN ke baad alag se chalao):

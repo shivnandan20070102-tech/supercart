@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { supabase } from '../config/supabase.js';
+import { getJwtSecret } from '../config/jwt.js';
 
 export const protect = async (req, res, next) => {
   let token;
@@ -26,9 +27,12 @@ export const protect = async (req, res, next) => {
       }
 
       // Keep compatibility with older server-issued tokens.
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret_jwt_key_grocery_app_12345');
+      const decoded = jwt.verify(token, getJwtSecret());
 
       req.user = await User.findById(decoded.id).select('-password');
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: 'Invalid token' });
+      }
       return next();
     } catch (error) {
       return res.status(401).json({ success: false, message: 'Supabase session expired. Please login again.' });
@@ -59,7 +63,7 @@ export const optionalAuth = async (req, _res, next) => {
           return next();
         }
         try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret_jwt_key_grocery_app_12345');
+          const decoded = jwt.verify(token, getJwtSecret());
           if (decoded?.id) {
             const dbUser = await User.findById(decoded.id).select('-password');
             if (dbUser) req.user = dbUser;

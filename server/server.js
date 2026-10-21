@@ -23,8 +23,10 @@ import { forgotPassword, loginUser, signupUser } from './controllers/authControl
 import { submitComplaint } from './controllers/complaintController.js';
 import { createOrder, getOrders, getMyOrders, getOrderById, assignDeliveryPartner, markOrderPacked } from './controllers/orderController.js';
 import { getOrderInvoice, sendInvoiceEmailEndpoint, updateOrderStatus } from './controllers/invoiceController.js';
+import { getJwtSecret } from './config/jwt.js';
 
 dotenv.config();
+getJwtSecret();
 
 const app = express();
 

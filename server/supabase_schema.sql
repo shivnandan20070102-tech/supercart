@@ -233,9 +233,34 @@ CREATE POLICY "Allow public read on products" ON public.products FOR SELECT USIN
 DROP POLICY IF EXISTS "Allow public insert on products" ON public.products;
 CREATE POLICY "Allow public insert on products" ON public.products FOR ALL USING (true);
 
--- Allow public access for users (login/signup)
+-- User rows are created by the Auth trigger/backend. Never expose this table
+-- to anon or allow clients to change roles.
 DROP POLICY IF EXISTS "Allow public access on users" ON public.users;
-CREATE POLICY "Allow public access on users" ON public.users FOR ALL USING (true);
+CREATE OR REPLACE FUNCTION public.current_user_role()
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT role FROM public.users WHERE id = auth.uid();
+$$;
+REVOKE ALL ON FUNCTION public.current_user_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
+
+DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
+CREATE POLICY "Users can read own profile" ON public.users
+    FOR SELECT TO authenticated
+    USING (id = auth.uid());
+
+DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
+CREATE POLICY "Users can update own profile" ON public.users
+    FOR UPDATE TO authenticated
+    USING (id = auth.uid())
+    WITH CHECK (
+      id = auth.uid()
+      AND role = public.current_user_role()
+    );
 
 -- Allow public access for orders
 DROP POLICY IF EXISTS "Allow public access on orders" ON public.orders;
