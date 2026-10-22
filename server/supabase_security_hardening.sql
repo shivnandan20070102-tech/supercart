@@ -222,6 +222,14 @@ CREATE POLICY "Complaint photos admin read" ON storage.objects
   FOR SELECT TO authenticated
   USING (bucket_id = 'complaint-photos' AND public.is_admin());
 
+-- The order-flow migration stores internal trigger diagnostics here.
+-- Keep the audit trail private and expose it only to trusted admins.
+ALTER TABLE public.order_flow_fix_audit ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Admins can read order flow audit" ON public.order_flow_fix_audit;
+CREATE POLICY "Admins can read order flow audit" ON public.order_flow_fix_audit
+  FOR SELECT TO authenticated
+  USING (public.is_admin());
+
 -- Verify there is no permissive users policy left:
 -- SELECT policyname, roles, cmd, qual, with_check
 -- FROM pg_policies
