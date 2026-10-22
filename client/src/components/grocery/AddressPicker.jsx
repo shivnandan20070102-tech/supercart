@@ -499,7 +499,7 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
               Map needs <b>VITE_MAPBOX_TOKEN</b> — please enter your address manually below.
             </p>
           ) : (
-            <div className="relative mb-3 overflow-hidden rounded-2xl border border-slate-200">
+            <div className="sc-address-map relative mb-3 overflow-hidden rounded-2xl border border-slate-200">
               <div ref={containerRef} className="h-[55vh] min-h-[300px] w-full" aria-label="Location map" />
               {/* Fixed center pin — map iske neeche move hota hai */}
               <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full">

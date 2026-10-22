@@ -131,3 +131,8 @@ html.dark .shadow-sm, html.dark .shadow-xl { box-shadow: 0 10px 25px rgb(2 6 23 
   border: 2px solid rgb(47 123 255 / 0.6);
   animation: sc-live-ping 2s ease-out infinite;
 }
+
+.sc-address-map .mapboxgl-ctrl-logo,
+.sc-address-map .mapboxgl-ctrl-attrib {
+  display: none !important;
+}
