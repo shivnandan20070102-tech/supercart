@@ -135,5 +135,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.decrement_product_stock(BIGINT, INTEGER) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.increment_product_stock(BIGINT, INTEGER) TO anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.decrement_product_stock(BIGINT, INTEGER) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.increment_product_stock(BIGINT, INTEGER) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.decrement_product_stock(BIGINT, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.increment_product_stock(BIGINT, INTEGER) TO service_role;

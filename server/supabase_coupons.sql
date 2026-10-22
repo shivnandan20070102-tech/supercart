@@ -27,7 +27,11 @@ DROP POLICY IF EXISTS "Allow public read on coupons" ON public.coupons;
 CREATE POLICY "Allow public read on coupons" ON public.coupons FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Allow public write on coupons" ON public.coupons;
-CREATE POLICY "Allow public write on coupons" ON public.coupons FOR ALL USING (true);
+DROP POLICY IF EXISTS "Admin full access on coupons" ON public.coupons;
+CREATE POLICY "Admin full access on coupons" ON public.coupons
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 -- 3. Enable Realtime (so Admin Dashboard live-updates)
 ALTER TABLE public.coupons REPLICA IDENTITY FULL;

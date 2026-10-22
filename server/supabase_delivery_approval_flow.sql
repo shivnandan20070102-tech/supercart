@@ -40,8 +40,8 @@ ALTER TABLE public.delivery_profiles REPLICA IDENTITY FULL;
 DROP POLICY IF EXISTS "Admins can update delivery profile approval" ON public.delivery_profiles;
 CREATE POLICY "Admins can update delivery profile approval" ON public.delivery_profiles
   FOR UPDATE TO authenticated
-  USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-  WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 DO $$
 BEGIN

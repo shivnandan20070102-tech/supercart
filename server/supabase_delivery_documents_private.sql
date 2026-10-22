@@ -77,8 +77,7 @@ CREATE POLICY "Admins can view all delivery documents"
     USING (
         bucket_id = 'delivery-documents'
         AND (
-            (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-            OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
+            public.is_admin()
         )
     );
 

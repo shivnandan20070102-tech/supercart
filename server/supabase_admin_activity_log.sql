@@ -32,19 +32,13 @@ ALTER TABLE public.admin_activity_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Admins can read activity log" ON public.admin_activity_log;
 CREATE POLICY "Admins can read activity log"
     ON public.admin_activity_log FOR SELECT TO authenticated
-    USING (
-        (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-        OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
-    );
+    USING (public.is_admin());
 
 -- Sirf Admin likh sakta hai (app client se insert isi se hota hai)
 DROP POLICY IF EXISTS "Admins can write activity log" ON public.admin_activity_log;
 CREATE POLICY "Admins can write activity log"
     ON public.admin_activity_log FOR INSERT TO authenticated
-    WITH CHECK (
-        (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-        OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
-    );
+    WITH CHECK (public.is_admin());
 
 -- Realtime (Activity Log tab live update ke liye)
 ALTER TABLE public.admin_activity_log REPLICA IDENTITY FULL;

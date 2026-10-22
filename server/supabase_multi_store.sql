@@ -31,15 +31,18 @@ CREATE TABLE IF NOT EXISTS public.stores (
 CREATE INDEX IF NOT EXISTS idx_stores_is_active ON public.stores (is_active);
 CREATE INDEX IF NOT EXISTS idx_stores_lat_lon ON public.stores (latitude, longitude);
 
--- RLS + policies (baaki tables jaisi hi public-access policy,
--- taaki anon-key backend bina tode kaam karta rahe)
+-- RLS + policies: stores are public-readable, but only admins may write.
 ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow public read on stores" ON public.stores;
 CREATE POLICY "Allow public read on stores" ON public.stores FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Allow public access on stores" ON public.stores;
-CREATE POLICY "Allow public access on stores" ON public.stores FOR ALL USING (true);
+DROP POLICY IF EXISTS "Admin full access on stores" ON public.stores;
+CREATE POLICY "Admin full access on stores" ON public.stores
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 -- Realtime (admin dashboard / client live updates ke liye)
 ALTER TABLE public.stores REPLICA IDENTITY FULL;
@@ -91,15 +94,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    account_role TEXT := COALESCE(NEW.raw_user_meta_data ->> 'role', 'customer');
+    account_role TEXT := 'customer';
     account_name TEXT := COALESCE(NEW.raw_user_meta_data ->> 'full_name', split_part(NEW.email, '@', 1));
     account_phone TEXT := COALESCE(NEW.raw_user_meta_data ->> 'phone', '');
 BEGIN
-    -- Unknown role aaye to customer bana do (constraint violation se bachne ke liye)
-    IF account_role NOT IN ('customer', 'admin', 'delivery', 'store_manager') THEN
-        account_role := 'customer';
-    END IF;
-
     INSERT INTO public.users (id, name, email, phone, role)
     VALUES (NEW.id, account_name, NEW.email, account_phone, account_role)
     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, role = EXCLUDED.role;
@@ -130,7 +128,15 @@ CREATE INDEX IF NOT EXISTS idx_store_staff_user_id ON public.store_staff (user_i
 ALTER TABLE public.store_staff ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow public access on store_staff" ON public.store_staff;
-CREATE POLICY "Allow public access on store_staff" ON public.store_staff FOR ALL USING (true);
+DROP POLICY IF EXISTS "Admin full access on store_staff" ON public.store_staff;
+DROP POLICY IF EXISTS "Store managers read own links" ON public.store_staff;
+CREATE POLICY "Admin full access on store_staff" ON public.store_staff
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+CREATE POLICY "Store managers read own links" ON public.store_staff
+    FOR SELECT TO authenticated
+    USING (user_id = auth.uid());
 
 ALTER TABLE public.store_staff REPLICA IDENTITY FULL;
 DO $$

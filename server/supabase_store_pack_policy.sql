@@ -15,8 +15,8 @@
 --   1. store_manager apne store_staff-linked stores ke orders READ kar sake
 --   2. store_manager apne stores ke orders ka status UPDATE kar sake
 --      (pack flow: pending_assignment/placed -> packed; assigned flow intact)
---   3. Purani public policies ko HAATH NAHI lagata (backend anon-key se
---      chalta rahe + koi existing flow na toote). Sirf ADD karta hai.
+--   3. Purani public orders policy ko remove karta hai, warna permissive RLS
+--      policy scoped manager permissions ko override kar deti.
 --   4. Helper: public.is_store_manager() + store-linked check
 -- ===================================================
 
@@ -58,7 +58,8 @@ AS $$
   );
 $$;
 
-GRANT EXECUTE ON FUNCTION public.is_store_manager() TO authenticated, anon;
+REVOKE ALL ON FUNCTION public.is_store_manager() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_store_manager() TO authenticated;
 
 -- ---------------------------------------------------
 -- 2. Helper: kya ye order login manager ke store ka hai?
@@ -77,7 +78,8 @@ AS $$
   );
 $$;
 
-GRANT EXECUTE ON FUNCTION public.is_my_store_order(BIGINT) TO authenticated, anon;
+REVOKE ALL ON FUNCTION public.is_my_store_order(BIGINT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_my_store_order(BIGINT) TO authenticated;
 
 -- ---------------------------------------------------
 -- 3. SELECT: manager apne stores ke orders dekh sake

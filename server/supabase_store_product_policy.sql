@@ -27,8 +27,7 @@ SECURITY DEFINER
 SET search_path = public
 STABLE
 AS $$
-  SELECT ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+  SELECT public.is_admin();
 $$;
 
 -- Helper: caller is store_id ka linked manager hai? (store_staff link)

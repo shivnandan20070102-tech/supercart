@@ -74,6 +74,21 @@ ALTER TABLE public.delivery_profiles
     ADD CONSTRAINT delivery_profiles_approval_status_check
     CHECK (approval_status IN ('pending', 'approved', 'rejected'));
 
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.users
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
 ALTER TABLE public.delivery_profiles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Delivery partners can read own profile" ON public.delivery_profiles;
@@ -83,7 +98,7 @@ CREATE POLICY "Delivery partners can read own profile" ON public.delivery_profil
 DROP POLICY IF EXISTS "Admins can read delivery profiles" ON public.delivery_profiles;
 CREATE POLICY "Admins can read delivery profiles" ON public.delivery_profiles
     FOR SELECT TO authenticated
-    USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+    USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Delivery partners can insert own profile" ON public.delivery_profiles;
 CREATE POLICY "Delivery partners can insert own profile" ON public.delivery_profiles
@@ -96,8 +111,8 @@ CREATE POLICY "Delivery partners can update own profile" ON public.delivery_prof
 DROP POLICY IF EXISTS "Admins can update delivery profile approval" ON public.delivery_profiles;
 CREATE POLICY "Admins can update delivery profile approval" ON public.delivery_profiles
     FOR UPDATE TO authenticated
-    USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('delivery-documents', 'delivery-documents', true)
@@ -136,7 +151,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    account_role TEXT := COALESCE(NEW.raw_user_meta_data ->> 'role', 'customer');
+    account_role TEXT := 'customer';
     account_name TEXT := COALESCE(NEW.raw_user_meta_data ->> 'full_name', split_part(NEW.email, '@', 1));
     account_phone TEXT := COALESCE(NEW.raw_user_meta_data ->> 'phone', '');
 BEGIN
@@ -144,11 +159,6 @@ BEGIN
     VALUES (NEW.id, account_name, NEW.email, account_phone, account_role)
     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, role = EXCLUDED.role;
 
-    IF account_role IN ('delivery', 'delivery_partner') THEN
-        INSERT INTO public.delivery_profiles (user_id, name, email, phone)
-        VALUES (NEW.id, account_name, NEW.email, account_phone)
-        ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone;
-    END IF;
     RETURN NEW;
 END;
 $$;
@@ -229,9 +239,8 @@ ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow public read on products" ON public.products;
 CREATE POLICY "Allow public read on products" ON public.products FOR SELECT USING (true);
 
--- Allow public insert on products (for initial seeding/admin)
+-- Products are publicly readable; writes are restricted by admin/store policies.
 DROP POLICY IF EXISTS "Allow public insert on products" ON public.products;
-CREATE POLICY "Allow public insert on products" ON public.products FOR ALL USING (true);
 
 -- User rows are created by the Auth trigger/backend. Never expose this table
 -- to anon or allow clients to change roles.
@@ -262,21 +271,20 @@ CREATE POLICY "Users can update own profile" ON public.users
       AND role = public.current_user_role()
     );
 
--- Allow public access for orders
+-- Orders are restricted by customer/delivery/store/admin policies.
 DROP POLICY IF EXISTS "Allow public access on orders" ON public.orders;
-CREATE POLICY "Allow public access on orders" ON public.orders FOR ALL USING (true);
 
 DROP POLICY IF EXISTS "Allow public read on store settings" ON public.store_settings;
 CREATE POLICY "Allow public read on store settings" ON public.store_settings FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Allow authenticated update on store settings" ON public.store_settings;
 CREATE POLICY "Allow authenticated update on store settings" ON public.store_settings FOR UPDATE TO authenticated
-    USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Allow authenticated insert on store settings" ON public.store_settings;
 CREATE POLICY "Allow authenticated insert on store settings" ON public.store_settings FOR INSERT TO authenticated
-    WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin' OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+    WITH CHECK (public.is_admin());
 
 ALTER TABLE public.store_settings REPLICA IDENTITY FULL;
 DO $$

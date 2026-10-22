@@ -51,7 +51,7 @@ BEGIN
     COALESCE(NEW.raw_user_meta_data ->> 'full_name', ''),
     NEW.email,
     COALESCE(NEW.raw_user_meta_data ->> 'phone', ''),
-    COALESCE(NEW.raw_user_meta_data ->> 'role', 'customer')
+    'customer'
   )
   ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
@@ -118,7 +118,7 @@ CREATE POLICY "Admins can upload product images"
 ON storage.objects FOR INSERT TO authenticated
 WITH CHECK (
   bucket_id = 'product-images'
-  AND (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  AND public.is_admin()
 );
 
 DROP POLICY IF EXISTS "Admins can update product images" ON storage.objects;
@@ -126,11 +126,11 @@ CREATE POLICY "Admins can update product images"
 ON storage.objects FOR UPDATE TO authenticated
 USING (
   bucket_id = 'product-images'
-  AND (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  AND public.is_admin()
 )
 WITH CHECK (
   bucket_id = 'product-images'
-  AND (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  AND public.is_admin()
 );
 
 DROP POLICY IF EXISTS "Admins can delete product images" ON storage.objects;
@@ -138,7 +138,7 @@ CREATE POLICY "Admins can delete product images"
 ON storage.objects FOR DELETE TO authenticated
 USING (
   bucket_id = 'product-images'
-  AND (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  AND public.is_admin()
 );
 
 -- Enable realtime events for the products table.

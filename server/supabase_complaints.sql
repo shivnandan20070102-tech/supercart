@@ -38,8 +38,7 @@ CREATE POLICY "Own complaints read" ON public.complaints
 DROP POLICY IF EXISTS "Admin complaints read" ON public.complaints;
 CREATE POLICY "Admin complaints read" ON public.complaints
   FOR SELECT TO authenticated
-  USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin());
 
 -- Complaint raise karo: sirf apne naam par, status hamesha pending,
 -- admin_response hamesha blank (user fake admin reply na bhar sake).
@@ -55,25 +54,20 @@ CREATE POLICY "Own complaint insert" ON public.complaints
 DROP POLICY IF EXISTS "Admin complaints update" ON public.complaints;
 CREATE POLICY "Admin complaints update" ON public.complaints
   FOR UPDATE TO authenticated
-  USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'))
-  WITH CHECK ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admin complaints delete" ON public.complaints;
 CREATE POLICY "Admin complaints delete" ON public.complaints
   FOR DELETE TO authenticated
-  USING ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-    OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin());
 
 -- Photo bucket (public read taaki admin/user photo dekh sakein).
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('complaint-photos', 'complaint-photos', true)
-ON CONFLICT (id) DO NOTHING;
+VALUES ('complaint-photos', 'complaint-photos', false)
+ON CONFLICT (id) DO UPDATE SET public = false;
 
 DROP POLICY IF EXISTS "Complaint photos public read" ON storage.objects;
-CREATE POLICY "Complaint photos public read" ON storage.objects
-  FOR SELECT USING (bucket_id = 'complaint-photos');
 
 -- FIX: client path hai 'complaints/<uid>/<file>' (complaints.js dekho),
 -- isliye folder [1]='complaints', [2]=uid hota hai. Purana check ([1]=uid)
@@ -121,9 +115,7 @@ CREATE POLICY "Complaint photos owner delete" ON storage.objects
 DROP POLICY IF EXISTS "Complaint photos admin read" ON storage.objects;
 CREATE POLICY "Complaint photos admin read" ON storage.objects
   FOR SELECT TO authenticated
-  USING (bucket_id = 'complaint-photos'
-    AND ((auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
-      OR EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')));
+  USING (bucket_id = 'complaint-photos' AND public.is_admin());
 
 -- Realtime (nayi complaint turant admin panel me).
 ALTER TABLE public.complaints REPLICA IDENTITY FULL;
