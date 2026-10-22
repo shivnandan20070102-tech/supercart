@@ -188,9 +188,8 @@ export const createStoreManager = async (req, res) => {
       adminProfile = adminProfileByEmail;
     }
 
-    const authRole = String(req.user.user_metadata?.role || '').trim().toLowerCase();
     const databaseRole = String(adminProfile?.role || '').trim().toLowerCase();
-    if (authRole !== 'admin' && databaseRole !== 'admin') {
+    if (databaseRole !== 'admin') {
       return res.status(403).json({ success: false, message: 'Only an admin can create store managers.' });
     }
 
