@@ -4,9 +4,9 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { Briefcase, Crosshair, Home, Loader2, MapPin, Search, X } from 'lucide-react';
 import useCurrentLocation from '../../hooks/useCurrentLocation';
 import { STORE_LOCATION } from '../../config/store';
+import { DEFAULT_MAP_ZOOM, enhanceMapLabels, MAPBOX_STREETS_STYLE } from '../../config/mapbox';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
-const INIT_ZOOM = 16;
 const MAX_ZOOM = 19;
 
 const LABELS = [
@@ -235,9 +235,9 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: MAPBOX_STREETS_STYLE,
       center: [startLng, startLat],
-      zoom: INIT_ZOOM,
+      zoom: DEFAULT_MAP_ZOOM,
       minZoom: 3,
       maxZoom: MAX_ZOOM,
       // Mapbox attribution legally required hai — compact "i" mode me rakho
@@ -264,6 +264,7 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     map.on('load', () => {
       const c = map.getCenter();
       setSelected({ lat: c.lat, lng: c.lng });
+      enhanceMapLabels(map);
       try { map.resize(); } catch { /* ignore */ }
     });
 
@@ -307,7 +308,7 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     if (mapRef.current) upsertLiveDot(mapRef.current, liveRef.current, fix);
     if (autoCenterRef.current && mapRef.current) {
       autoCenterRef.current = false;
-      mapRef.current.flyTo({ center: [fix.lng, fix.lat], zoom: INIT_ZOOM, essential: true });
+      mapRef.current.flyTo({ center: [fix.lng, fix.lat], zoom: DEFAULT_MAP_ZOOM, essential: true });
     }
   }, [open, gpsCoords]);
 
@@ -401,7 +402,7 @@ const AddressPicker = ({ open, initial, onClose, onSave }) => {
     setSuggestions([]);
     setSearchText(s.name.split(',').slice(0, 2).join(','));
     if (mapRef.current && s.lng != null && s.lat != null) {
-      mapRef.current.flyTo({ center: [s.lng, s.lat], zoom: INIT_ZOOM, essential: true });
+      mapRef.current.flyTo({ center: [s.lng, s.lat], zoom: DEFAULT_MAP_ZOOM, essential: true });
     }
   };
 

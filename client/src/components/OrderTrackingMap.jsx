@@ -2,10 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../config/supabase';
+import { DEFAULT_MAP_ZOOM, enhanceMapLabels, MAPBOX_STREETS_STYLE } from '../config/mapbox';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 const DEFAULT_CENTER = [77.209, 28.6139];
-const DEFAULT_ZOOM = 14;
+const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM;
 
 // Rider ka Blue Dot — inline styles taaki kabhi invisible na ho.
 const makeBlueDot = () => {
@@ -104,12 +105,13 @@ const OrderTrackingMap = ({ riderId, dropLat, dropLng, dropLabel }) => {
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: MAPBOX_STREETS_STYLE,
       center: drop ? [drop.lng, drop.lat] : DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: false,
     });
     mapRef.current = map;
+    map.on('load', () => enhanceMapLabels(map));
     try {
       map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
     } catch { /* optional */ }

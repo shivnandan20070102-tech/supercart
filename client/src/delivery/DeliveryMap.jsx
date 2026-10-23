@@ -3,13 +3,14 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { Info, Loader2, LocateFixed, MapPinOff, RotateCcw } from 'lucide-react';
 import useLiveLocation from './useLiveLocation';
+import { DEFAULT_MAP_ZOOM, enhanceMapLabels, MAPBOX_STREETS_STYLE } from '../config/mapbox';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 // GPS off/deny + koi Home Store na ho tab ka LAST-RESORT default view.
 // Pehle Home Store (fallbackCenter prop) try hota hai — Delhi sirf tab jab
 // partner ka home store pata hi na ho.
 const DEFAULT_CENTER = [77.209, 28.6139];
-const DEFAULT_ZOOM = 15;
+const DEFAULT_ZOOM = DEFAULT_MAP_ZOOM;
 const FOCUS_ZOOM = 16;
 
 // Home Store coords valid hain to [lng, lat] do, warna null (Delhi default).
@@ -137,11 +138,11 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: MAPBOX_STREETS_STYLE,
       // Mount ke waqt Home Store pata ho to wahin kholo, warna Delhi default
       // (GPS fix / fallback effect baad me sahi jagah flyTo kar dega).
       center: toLngLat(fallbackCenter) || DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM, // 15
+      zoom: DEFAULT_ZOOM,
       minZoom: 3,
       maxZoom: 19,
       antialias: true,
@@ -187,6 +188,7 @@ const DeliveryMap = ({ fallbackCenter = null, locationAllowed = true, assignedSt
           }
         } catch (e) { /* kuch layers me text-field set nahi hota */ }
       });
+      enhanceMapLabels(map);
 
       // eslint-disable-next-line no-console
       console.log('[DeliveryMap] label layers:', labelLayers.map((l) => l.id));

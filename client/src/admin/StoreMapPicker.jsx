@@ -3,6 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { Crosshair, Loader2, MapPin, Search } from 'lucide-react';
 import { STORE_LOCATION } from '../config/store';
+import { DEFAULT_MAP_ZOOM, enhanceMapLabels, MAPBOX_STREETS_STYLE } from '../config/mapbox';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
@@ -52,9 +53,9 @@ const StoreMapPicker = ({ latitude, longitude, onPick, onAddressChange }) => {
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: MAPBOX_STREETS_STYLE,
       center: [lng, lat],
-      zoom: toNum(latitude) != null ? 15 : 11,
+      zoom: toNum(latitude) != null ? DEFAULT_MAP_ZOOM : 13,
       attributionControl: false,
     });
     mapRef.current = map;
@@ -76,6 +77,7 @@ const StoreMapPicker = ({ latitude, longitude, onPick, onAddressChange }) => {
     };
     map.on('click', onClick);
     map.on('load', () => {
+      enhanceMapLabels(map);
       try { map.resize(); } catch { /* ignore */ }
     });
 
@@ -169,7 +171,7 @@ const StoreMapPicker = ({ latitude, longitude, onPick, onAddressChange }) => {
     setSearchText(s.name.split(',').slice(0, 2).join(','));
     if (s.lng != null && s.lat != null) {
       if (mapRef.current) {
-        try { mapRef.current.flyTo({ center: [s.lng, s.lat], zoom: 15, essential: true }); } catch { /* ignore */ }
+        try { mapRef.current.flyTo({ center: [s.lng, s.lat], zoom: DEFAULT_MAP_ZOOM, essential: true }); } catch { /* ignore */ }
       }
       if (markerRef.current) {
         try { markerRef.current.setLngLat([s.lng, s.lat]); } catch { /* ignore */ }
@@ -186,7 +188,7 @@ const StoreMapPicker = ({ latitude, longitude, onPick, onAddressChange }) => {
         const lat = Number(pos.coords.latitude.toFixed(6));
         const lng = Number(pos.coords.longitude.toFixed(6));
         if (mapRef.current) {
-          try { mapRef.current.flyTo({ center: [lng, lat], zoom: 15, essential: true }); } catch { /* ignore */ }
+          try { mapRef.current.flyTo({ center: [lng, lat], zoom: DEFAULT_MAP_ZOOM, essential: true }); } catch { /* ignore */ }
         }
         if (markerRef.current) {
           try { markerRef.current.setLngLat([lng, lat]); } catch { /* ignore */ }
