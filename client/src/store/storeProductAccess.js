@@ -1,8 +1,8 @@
 // Store product access — pure helpers (Node-testable).
 //
 // Rule: manager SIRF apne store(s) ke products manage kare
-// (product.store_id uske storeIds me ho). Global (store_id NULL) ya doosre
-// store ke products read-only. DB-level RLS (supabase_store_product_policy.sql)
+// (product.store_id uske storeIds me ho). DB-level RLS
+// (supabase_store_product_policy.sql)
 // yehi rule enforce karta hai — ye client-side same rule hai taaki UI pehle
 // se sahi dikhe (bypass attempt RLS par fail hoga).
 

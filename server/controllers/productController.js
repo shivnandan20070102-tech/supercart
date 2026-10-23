@@ -1,14 +1,17 @@
 import { supabase } from '../config/supabase.js';
-import { initialProducts } from '../data/seedData.js';
 
 // @desc    Get all products from Supabase Database
 // @route   GET /products or GET /api/products
 // @access  Public
 export const getProducts = async (req, res) => {
   try {
-    const { category, search, featured } = req.query;
+    const { category, search, featured, store_id: storeId } = req.query;
 
     let query = supabase.from('products').select('*').order('id', { ascending: true });
+    if (!storeId || !Number.isInteger(Number(storeId)) || Number(storeId) <= 0) {
+      return res.status(200).json({ success: true, count: 0, data: [], source: 'store_required' });
+    }
+    query = query.eq('store_id', Number(storeId));
 
     if (category && category !== 'all') {
       query = query.ilike('category', `%${category}%`);
@@ -26,13 +29,10 @@ export const getProducts = async (req, res) => {
 
     if (error) {
       console.warn('⚠️ Supabase Products Query Warning:', error.message);
-      // If table is not yet created in Supabase, return seed products with note
-      return res.status(200).json({
-        success: true,
-        count: initialProducts.length,
-        data: initialProducts,
-        source: 'seed_fallback',
-        note: 'Please run server/supabase_schema.sql in Supabase SQL editor to link live database tables.',
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve store products',
+        error: error.message,
       });
     }
 
@@ -57,20 +57,22 @@ export const getProducts = async (req, res) => {
 export const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
+    const storeId = Number(req.query.store_id);
+    if (!Number.isInteger(storeId) || storeId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid store_id is required',
+      });
+    }
 
     const { data: product, error } = await supabase
       .from('products')
       .select('*')
       .eq('id', id)
+      .eq('store_id', storeId)
       .single();
 
     if (error || !product) {
-      // Fallback check in initialProducts
-      const fallback = initialProducts.find((p, index) => String(index + 1) === id || p.name === id);
-      if (fallback) {
-        return res.status(200).json({ success: true, data: fallback, source: 'seed_fallback' });
-      }
-
       return res.status(404).json({
         success: false,
         message: 'Product not found in Supabase database',

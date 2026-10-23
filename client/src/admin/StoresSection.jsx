@@ -331,10 +331,8 @@ const StoresSection = ({ searchQuery = '' }) => {
         }
       }
 
-      // Step 3: products unlink — store_id NULL (products delete NAHI honge).
-      // (FK ON DELETE SET NULL bhi yehi karega, phir bhi explicit taaki
-      // FK na bhi ho to bhi products orphan na rahen.)
-      const { error: productsError } = await supabase.from('products').update({ store_id: null }).eq('store_id', store.id);
+      // Step 3: delete this store's products; products must never become global.
+      const { error: productsError } = await supabase.from('products').delete().eq('store_id', store.id);
       if (productsError) throw productsError;
 
       // Step 4: store delete — purane delivered/cancelled orders ke rows
@@ -343,7 +341,7 @@ const StoresSection = ({ searchQuery = '' }) => {
       if (deleteError) throw deleteError;
 
       setDeleteTarget(null);
-      showNotice('success', `Store "${store.store_name}" deleted ✅ (products unlinked, past orders kept in history)`);
+      showNotice('success', `Store "${store.store_name}" deleted ✅ (products deleted, past orders kept in history)`);
       logAdminActivity({
         actionType: 'deleted_store',
         targetId: store.id,
@@ -414,14 +412,14 @@ const StoresSection = ({ searchQuery = '' }) => {
     }
   };
 
-  // Store detail inventory: is store ke (store_id) + global (NULL) products.
+  // Store detail inventory: only this store's products.
   // Naye columns na bane hon to purane stock par fallback (panel na toote).
   const loadDetailProducts = useCallback(async (storeId) => {
     try {
       const { data, error } = await supabase
         .from('products')
         .select('id,name,image,unit,price,stock_quantity,low_stock_threshold,is_in_stock,store_id')
-        .or(`store_id.eq.${storeId},store_id.is.null`)
+        .eq('store_id', storeId)
         .order('name', { ascending: true });
       if (error) throw error;
       return data || [];
@@ -430,7 +428,7 @@ const StoresSection = ({ searchQuery = '' }) => {
       const { data, error } = await supabase
         .from('products')
         .select('id,name,image,unit,price,stock,in_stock,store_id')
-        .or(`store_id.eq.${storeId},store_id.is.null`)
+        .eq('store_id', storeId)
         .order('name', { ascending: true });
       if (error) throw error;
       return data || [];
@@ -778,7 +776,7 @@ const StoresSection = ({ searchQuery = '' }) => {
             </p>
             <ul className="mt-3 list-disc space-y-1 pl-5 text-[11px] text-slate-400">
               <li>If there are active (pending/packed) orders, deletion will be blocked.</li>
-              <li>Staff links will be removed, products unlinked (not deleted).</li>
+              <li>Staff links and this store's products will be deleted; past orders remain in history.</li>
               <li>Past delivered/cancelled orders will remain in history.</li>
             </ul>
             <div className="mt-5 flex gap-2">
@@ -862,7 +860,6 @@ const StoresSection = ({ searchQuery = '' }) => {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-black text-white">
                               {p.name}
-                              {p.store_id == null && <span className="ml-1.5 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold text-slate-400">GLOBAL</span>}
                             </p>
                             <p className="text-[11px] text-slate-500">₹{p.price}{p.unit ? ` · ${p.unit}` : ''}</p>
                           </div>

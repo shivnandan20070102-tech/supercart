@@ -319,7 +319,7 @@ const StoreDashboard = () => {
     setOrders(rows);
   }, []);
 
-  // Apne store(s) ke products — global (store_id NULL) + apne stores wale.
+  // Sirf apne store(s) ke products — global/orphan rows kabhi load nahi karo.
   // Naye columns na bane hon (migration pending) to purane stock par fallback.
   const loadProducts = useCallback(async (ids) => {
     const list = (ids || []).map((v) => Number(v)).filter((n) => !Number.isNaN(n));
@@ -332,6 +332,7 @@ const StoreDashboard = () => {
       const res = await supabase
         .from('products')
         .select('id,name,category,image,barcode_number,unit,stock_quantity,low_stock_threshold,is_in_stock,store_id')
+        .in('store_id', list)
         .order('name', { ascending: true });
       if (res.error) throw res.error;
       rows = res.data;
@@ -340,12 +341,13 @@ const StoreDashboard = () => {
       const res = await supabase
         .from('products')
         .select('id,name,category,image,unit,stock,in_stock,store_id')
+        .in('store_id', list)
         .order('name', { ascending: true });
       if (res.error) throw res.error;
       rows = res.data;
     }
     setStoreProducts(
-      (rows || []).filter((p) => p.store_id == null || list.includes(Number(p.store_id))),
+      (rows || []).filter((p) => list.includes(Number(p.store_id))),
     );
     setCategories([...new Set((rows || []).map((p) => String(p.category || '').trim()).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b)));
@@ -519,8 +521,7 @@ const StoreDashboard = () => {
       setError('Enter a valid quantity (0 or more).');
       return;
     }
-    const isGlobalProduct = product?.store_id == null || product?.store_id === '';
-    if (!isGlobalProduct && !canManageProduct(product, storeIds)) {
+    if (!canManageProduct(product, storeIds)) {
       setError('You can only update stock of your own store products.');
       return;
     }
@@ -530,15 +531,10 @@ const StoreDashboard = () => {
     try {
       let updError = null;
       try {
-        const res = isGlobalProduct
-          ? await supabase.rpc('update_product_stock_for_store_manager', {
-            p_product_id: product.id,
-            p_stock_quantity: qty,
-          })
-          : await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
+        const res = await supabase.from('products').update({ stock_quantity: qty }).eq('id', product.id);
         updError = res.error;
         // Naye columns abhi bane na hon to purane `stock` par likho.
-        if (!isGlobalProduct && updError && /stock_quantity|column|schema cache/i.test(updError.message || '')) {
+        if (updError && /stock_quantity|column|schema cache/i.test(updError.message || '')) {
           const retry = await supabase.from('products').update({ stock: qty }).eq('id', product.id);
           updError = retry.error;
         }
@@ -986,7 +982,7 @@ const StoreDashboard = () => {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-bold text-slate-400">
-                {sortedProducts.length} product{sortedProducts.length === 1 ? '' : 's'} · your store{storeIds.length > 1 ? 's' : ''} + global
+                {sortedProducts.length} product{sortedProducts.length === 1 ? '' : 's'} · your store{storeIds.length > 1 ? 's' : ''}
               </p>
               {storeIds.length > 0 && (
                 <button
@@ -1012,13 +1008,10 @@ const StoreDashboard = () => {
                 const state = stockStateOf(p);
                 const busy = updatingStockId === p.id;
                 const draft = stockDrafts[p.id];
-                const storeName = p.store_id == null
-                  ? 'All stores'
-                  : (stores.find((s) => Number(s.id) === Number(p.store_id))?.store_name || `Store #${p.store_id}`);
-                // FULL CONTROL sirf apne store ke products par (global/doosre
-                // store wale read-only). RLS bhi yehi enforce karta hai.
+                const storeName = stores.find((s) => Number(s.id) === Number(p.store_id))?.store_name || `Store #${p.store_id}`;
+                // FULL CONTROL sirf apne store ke products par. RLS bhi yehi enforce karta hai.
                 const manageable = canManageProduct(p, storeIds);
-                const stockManageable = manageable || p.store_id == null;
+                const stockManageable = manageable;
                 return (
                   <li
                     key={p.id}
@@ -1096,11 +1089,6 @@ const StoreDashboard = () => {
                         </span>
                       )}
                     </div>
-                    {!manageable && (
-                      <p className="border-t border-slate-800 px-4 py-2 text-[11px] font-bold text-slate-500">
-                        Global product — name, price and image are Admin-controlled. Stock can be updated for your store.
-                      </p>
-                    )}
                     <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3">
                       <button
                         type="button"

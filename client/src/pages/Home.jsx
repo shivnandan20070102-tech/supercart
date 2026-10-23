@@ -86,6 +86,7 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
         const apiData = await fetchProducts(
           selectedCategory === 'all' ? '' : selectedCategory,
           debouncedSearch,
+          { storeId: servingStore?.id },
         );
 
         if (!stillCurrent()) return;
@@ -114,8 +115,8 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
             low_stock_threshold: item.low_stock_threshold ?? 5,
             inStock: (item.is_in_stock ?? item.in_stock ?? item.inStock ?? true) !== false && !((item.stock_quantity ?? item.stock) != null && Number(item.stock_quantity ?? item.stock) <= 0),
             description: item.description,
-            // Multi-store: product kis store ka hai (NULL = purana/global product, sab stores par)
-            store_id: item.store_id ?? item.storeId ?? null,
+            // Every product belongs to exactly one store.
+            store_id: item.store_id ?? item.storeId,
           }));
           setProducts(normalized);
           setFetchTimedOut(false);
@@ -153,7 +154,7 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
       window.clearTimeout(timeoutTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategory, debouncedSearch, retryKey]);
+  }, [selectedCategory, debouncedSearch, retryKey, servingStore?.id]);
 
   // Real-time stock: kisi aur user ke order se stock ghate to grid turant
   // update ho (page reload nahi). Sirf stock fields patch hote hain —
@@ -210,12 +211,12 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
   }, [products, selectedCategory, searchQuery]);
 
   // Multi-store filter: store mil gaya to SIRF usi store ke products dikhao.
-  // store_id NULL wale purane/global products har store par dikhte hain.
-  // Location unknown ho to filtering nahi (purana behaviour).
+  // Location unknown ho to products hide rakho; user ko kisi doosre store ka
+  // inventory kabhi nahi dikhna chahiye.
   const storeProducts = useMemo(() => {
-    if (!servingStore) return filteredProducts;
+    if (!servingStore) return [];
     return filteredProducts.filter(
-      (product) => product.store_id == null || String(product.store_id) === String(servingStore.id),
+      (product) => String(product.store_id) === String(servingStore.id),
     );
   }, [filteredProducts, servingStore]);
 

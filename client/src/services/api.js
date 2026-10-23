@@ -45,10 +45,11 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = PRODUCT_FETCH_TIM
 
 // Supabase query ko bhi time-bound rakho — atak/fail ho to null (caller aage badhe).
 // Ye helper kabhi throw NAHI karta, taaki fallback chain na toote.
-const querySupabaseProducts = async () => {
+const querySupabaseProducts = async (storeId) => {
   try {
+    if (!Number.isInteger(Number(storeId)) || Number(storeId) <= 0) return [];
     const raced = await Promise.race([
-      supabase.from('products').select('*').order('id', { ascending: true }),
+      supabase.from('products').select('*').eq('store_id', Number(storeId)).order('id', { ascending: true }),
       sleep(SUPABASE_FALLBACK_TIMEOUT_MS).then(() => ({ __timedOut: true })),
     ]);
     if (!raced || raced.__timedOut || raced.error) return null;
@@ -69,12 +70,14 @@ const mockCatalogFallback = (category = '', search = '') => {
 };
 
 export const fetchProducts = async (category = '', search = '', options = {}) => {
+  if (!Number.isInteger(Number(options?.storeId)) || Number(options.storeId) <= 0) return [];
   const timeoutMs = Number(options?.timeoutMs) > 0 ? Number(options.timeoutMs) : PRODUCT_FETCH_TIMEOUT_MS;
   const graceMs = Number(options?.wakeGraceMs) > 0 ? Number(options.wakeGraceMs) : BACKEND_WAKE_HINT_MS;
 
   const params = new URLSearchParams();
   if (category && category !== 'all') params.append('category', category);
   if (search) params.append('search', search);
+  if (options?.storeId != null) params.append('store_id', options.storeId);
 
   const url = `${API_BASE_URL}/products?${params.toString()}`;
 
@@ -97,7 +100,7 @@ export const fetchProducts = async (category = '', search = '', options = {}) =>
   if (quick) {
     if (quick.ok) return quick.data;
     // Backend TURANT fail (down/galati) — Supabase direct try karo.
-    const sb = await querySupabaseProducts();
+    const sb = await querySupabaseProducts(options?.storeId);
     if (sb?.length) return sb;
     // Dono fail + timeout tha to throw (UI retry button dikhayega),
     // warna purana mock-catalog behaviour.
@@ -109,7 +112,7 @@ export const fetchProducts = async (category = '', search = '', options = {}) =>
   // Supabase (hamesha-on) se poochho; rows milen to TURANT wapas —
   // backend request background me poori hokar Render ko warm kar degi,
   // uske baad ki requests normal speed (1-2s) par aayengi.
-  const sb = await querySupabaseProducts();
+  const sb = await querySupabaseProducts(options?.storeId);
   if (sb?.length) return sb;
 
   // Supabase khaali/fail — backend ke wake-up wale jawab ka wait karo.
