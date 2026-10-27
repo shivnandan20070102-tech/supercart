@@ -32,6 +32,7 @@ import ComplaintForm from '../components/ComplaintForm';
 import { buildProductPayload, canManageProduct } from './storeProductAccess';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
 import InactivityGuard from '../components/InactivityGuard';
+import { fetchCategories } from '../services/categories';
 
 // PACK-FIRST: jo bhi order aaye, kisi bhi store se — pehle To-Pack me aayega,
 // pack hoke hi aage badhega. Status key normalize (space/hyphen -> underscore,
@@ -323,6 +324,11 @@ const StoreDashboard = () => {
   // Naye columns na bane hon (migration pending) to purane stock par fallback.
   const loadProducts = useCallback(async (ids) => {
     const list = (ids || []).map((v) => Number(v)).filter((n) => !Number.isNaN(n));
+    try {
+      setCategories(await fetchCategories());
+    } catch (error) {
+      setError(`Categories: ${error.message}`);
+    }
     if (list.length === 0) {
       setStoreProducts([]);
       return;
@@ -349,8 +355,6 @@ const StoreDashboard = () => {
     setStoreProducts(
       (rows || []).filter((p) => list.includes(Number(p.store_id))),
     );
-    setCategories([...new Set((rows || []).map((p) => String(p.category || '').trim()).filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b)));
   }, []);
 
   // Init: role check -> store_staff link -> stores -> orders

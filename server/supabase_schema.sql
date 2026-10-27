@@ -4,6 +4,22 @@
 -- ===================================================
 
 -- 1. Create PRODUCTS Table
+CREATE TABLE IF NOT EXISTS public.categories (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+INSERT INTO public.categories (name)
+VALUES
+    ('Fruits & Vegetables'),
+    ('Dairy & Eggs'),
+    ('Bakery & Bread'),
+    ('Atta, Rice & Dal'),
+    ('Snacks & Beverages'),
+    ('Oils & Masalas')
+ON CONFLICT (name) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.products (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -231,6 +247,7 @@ WHERE NOT EXISTS (SELECT 1 FROM public.store_settings);
 
 -- 4. Enable Row Level Security (RLS) & Public Policies
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
@@ -238,6 +255,15 @@ ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
 -- Allow public read access to products
 DROP POLICY IF EXISTS "Allow public read on products" ON public.products;
 CREATE POLICY "Allow public read on products" ON public.products FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow public read on categories" ON public.categories;
+CREATE POLICY "Allow public read on categories" ON public.categories FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Admins can manage categories" ON public.categories;
+CREATE POLICY "Admins can manage categories" ON public.categories
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 -- Products are publicly readable; writes are restricted by admin/store policies.
 DROP POLICY IF EXISTS "Allow public insert on products" ON public.products;
