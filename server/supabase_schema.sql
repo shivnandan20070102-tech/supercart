@@ -245,12 +245,21 @@ INSERT INTO public.store_settings (is_online)
 SELECT true
 WHERE NOT EXISTS (SELECT 1 FROM public.store_settings);
 
+CREATE TABLE IF NOT EXISTS public.homepage_banners (
+    id BIGSERIAL PRIMARY KEY,
+    image_url TEXT NOT NULL,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- 4. Enable Row Level Security (RLS) & Public Policies
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.homepage_banners ENABLE ROW LEVEL SECURITY;
 
 -- Allow public read access to products
 DROP POLICY IF EXISTS "Allow public read on products" ON public.products;
@@ -302,6 +311,15 @@ DROP POLICY IF EXISTS "Allow public access on orders" ON public.orders;
 
 DROP POLICY IF EXISTS "Allow public read on store settings" ON public.store_settings;
 CREATE POLICY "Allow public read on store settings" ON public.store_settings FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow public read on homepage banners" ON public.homepage_banners;
+CREATE POLICY "Allow public read on homepage banners" ON public.homepage_banners FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Admins can manage homepage banners" ON public.homepage_banners;
+CREATE POLICY "Admins can manage homepage banners" ON public.homepage_banners
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Allow authenticated update on store settings" ON public.store_settings;
 CREATE POLICY "Allow authenticated update on store settings" ON public.store_settings FOR UPDATE TO authenticated

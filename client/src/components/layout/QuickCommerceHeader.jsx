@@ -62,10 +62,13 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
   // (no camera/barcode/QR logic anywhere in this component).
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState('');
+  const [categoryIndicator, setCategoryIndicator] = useState({ left: 0, width: 0 });
   const recognitionRef = useRef(null);
   const micStreamRef = useRef(null);
   const voiceErrorTimerRef = useRef(null);
   const searchInputRef = useRef(null);
+  const categoryNavRef = useRef(null);
+  const categoryButtonRefs = useRef(new Map());
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === '/';
@@ -237,6 +240,22 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
       navigate('/');
     }
   };
+
+  useEffect(() => {
+    if (!isHome) return undefined;
+    const updateIndicator = () => {
+      const activeButton = categoryButtonRefs.current.get(selectedCategory);
+      const nav = categoryNavRef.current;
+      if (!activeButton || !nav) return;
+      setCategoryIndicator({
+        left: activeButton.offsetLeft - nav.scrollLeft,
+        width: activeButton.offsetWidth,
+      });
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
+  }, [isHome, selectedCategory]);
 
 
   return (
@@ -410,13 +429,18 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
 
           {/* Row 4: category tabs (sirf home par) */}
           {isHome && (
-            <nav aria-label="Categories" className="qc-no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 pt-1">
+            <nav ref={categoryNavRef} aria-label="Categories" className="qc-no-scrollbar relative -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 pt-1">
+              <span aria-hidden="true" className="pointer-events-none absolute bottom-1 h-0.5 rounded-full bg-rose-400 shadow-[0_0_10px_rgb(251_113_133/0.75)] transition-[left,width] duration-300 ease-out" style={{ left: categoryIndicator.left, width: categoryIndicator.width }} />
               {CATEGORIES.map((cat) => {
                 const Icon = CATEGORY_ICONS[cat.icon] || Sparkles;
                 const isActive = selectedCategory === cat.id || selectedCategory === cat.name;
                 return (
                   <button
                     key={cat.id}
+                    ref={(element) => {
+                      if (element) categoryButtonRefs.current.set(cat.id === 'all' ? 'all' : cat.name, element);
+                      else categoryButtonRefs.current.delete(cat.id === 'all' ? 'all' : cat.name);
+                    }}
                     type="button"
                     onClick={() => handleSelectCategory(cat)}
                     aria-pressed={isActive}

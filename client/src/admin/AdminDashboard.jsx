@@ -19,6 +19,7 @@ import { fetchCategories } from '../services/categories';
 const sections = [
   { id: 'overview', label: 'Master Overview', icon: Crown },
   { id: 'products', label: 'Products', icon: Box },
+  { id: 'posters', label: 'Poster / Wallpaper', icon: ImagePlus },
   { id: 'inventory', label: 'Inventory Alerts', icon: TriangleAlert },
   { id: 'orders', label: 'Orders', icon: BarChart3 },
   { id: 'stores', label: 'Stores', icon: Store },
@@ -60,6 +61,9 @@ const AdminDashboard = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [posters, setPosters] = useState([]);
+  const [posterFile, setPosterFile] = useState(null);
+  const [uploadingPoster, setUploadingPoster] = useState(false);
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [deliveryBoys, setDeliveryBoys] = useState([]);
@@ -119,6 +123,59 @@ const AdminDashboard = () => {
     } catch (error) {
       notify('error', `Categories: ${error.message}`);
     }
+  };
+  const loadPosters = async () => {
+    const { data, error } = await supabase
+      .from('homepage_banners')
+      .select('*')
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) {
+      notify('error', `Posters: ${error.message}`);
+      return;
+    }
+    setPosters(data || []);
+  };
+  const uploadPoster = async (event) => {
+    event.preventDefault();
+    if (!posterFile) {
+      notify('error', 'Please select a poster image.');
+      return;
+    }
+    setUploadingPoster(true);
+    try {
+      const path = `homepage-banners/${crypto.randomUUID()}-${posterFile.name}`;
+      const upload = await supabase.storage.from('product-images').upload(path, posterFile, { contentType: posterFile.type });
+      if (upload.error) throw upload.error;
+      const imageUrl = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
+      const nextOrder = posters.length > 0 ? Math.max(...posters.map((poster) => Number(poster.display_order) || 0)) + 1 : 0;
+      const result = await supabase.from('homepage_banners').insert({ image_url: imageUrl, display_order: nextOrder, is_active: true });
+      if (result.error) throw result.error;
+      setPosterFile(null);
+      event.target.reset();
+      await loadPosters();
+      notify('success', 'Poster uploaded.');
+    } catch (error) {
+      notify('error', error.message);
+    } finally {
+      setUploadingPoster(false);
+    }
+  };
+  const deletePoster = async (poster) => {
+    if (!window.confirm('Delete this poster?')) return;
+    const { error } = await supabase.from('homepage_banners').delete().eq('id', poster.id);
+    if (error) notify('error', error.message);
+    else { notify('success', 'Poster deleted.'); await loadPosters(); }
+  };
+  const movePoster = async (poster, direction) => {
+    const index = posters.findIndex((item) => item.id === poster.id);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= posters.length) return;
+    const target = posters[targetIndex];
+    const first = await supabase.from('homepage_banners').update({ display_order: target.display_order }).eq('id', poster.id);
+    const second = await supabase.from('homepage_banners').update({ display_order: poster.display_order }).eq('id', target.id);
+    if (first.error || second.error) notify('error', first.error?.message || second.error?.message);
+    else await loadPosters();
   };
   const addCategory = async (event) => {
     event.preventDefault();
@@ -198,7 +255,7 @@ const AdminDashboard = () => {
       preloadOrderSound();
       // Pehle click par audio unlock (autoplay policy) — ek baar hi chahiye.
       window.addEventListener('pointerdown', unlockOrderAudio, { once: true });
-      await Promise.all([loadProducts(), loadCategories(), loadOrders(), loadUsers(), loadDeliveryProfiles(), loadCoupons(), loadStores()]);
+      await Promise.all([loadProducts(), loadCategories(), loadPosters(), loadOrders(), loadUsers(), loadDeliveryProfiles(), loadCoupons(), loadStores()]);
       setLoading(false); setChecking(false);
     };
     init();
@@ -207,7 +264,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (checking) return undefined;
-    const channel = supabase.channel('admin-data-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadProducts).on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, loadCategories).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadOrders).on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, loadUsers).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_profiles' }, loadDeliveryProfiles).on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, loadCoupons).subscribe();
+    const channel = supabase.channel('admin-data-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadProducts).on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, loadCategories).on('postgres_changes', { event: '*', schema: 'public', table: 'homepage_banners' }, loadPosters).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadOrders).on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, loadUsers).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_profiles' }, loadDeliveryProfiles).on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, loadCoupons).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [checking]);
 
@@ -538,6 +595,27 @@ const AdminDashboard = () => {
     <main className="min-w-0 flex-1 bg-slate-950 p-4 pt-20 sm:p-8 sm:pt-8"><div className="mx-auto max-w-7xl"><div className="mb-8 flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">Control room</p><h1 className="mt-2 text-3xl font-black text-white">{current.label}</h1></div><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 sm:max-w-xs"><Search className="h-4 w-4 shrink-0 text-slate-500" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={active === 'overview' ? 'Search all data (order, customer, store...)' : active === 'products' ? 'Search products...' : active === 'orders' ? 'Search orders...' : active === 'stores' ? 'Search stores...' : active === 'users' ? 'Search users...' : active === 'delivery' ? 'Search delivery boys...' : active === 'coupons' ? 'Search coupons...' : 'Search partners...'} className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X className="h-4 w-4 text-slate-500 hover:text-white" /></button>}</label><button type="button" onClick={toggleStore} disabled={updatingStore} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black transition disabled:cursor-wait disabled:opacity-60 ${isOnline ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'}`}><Store className="h-4 w-4" />{updatingStore ? 'Updating...' : isOnline ? 'Online' : 'Offline'}</button><p className="text-xs text-slate-500">{email}</p></div></div>{notice.text && <div className={`mb-5 rounded-xl p-3 text-sm font-bold ${notice.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>{notice.text}</div>}
       {active === 'overview' && <MasterOverview searchQuery={search} />}
       {active === 'products' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6"><div className="mb-5 flex flex-wrap justify-between gap-3"><div><h2 className="font-black">Products</h2><p className="text-xs text-slate-500">{q ? `${filteredProducts.length} of ${products.length} products` : `${products.length} products`}</p></div><button onClick={() => { setProductForm(emptyProduct); setEditingProduct(null); setImagePreview(''); setProductModal(true); }} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950"><Plus className="h-4 w-4" />Add Product</button></div><form onSubmit={addCategory} className="mb-5 flex flex-wrap items-end gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3"><label className="min-w-[220px] flex-1 text-xs font-bold text-slate-400">Manage Categories<input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="New category name" className={`${inputClass} mt-1.5`} /></label><button className="rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-black text-slate-950">Add Category</button><div className="flex w-full flex-wrap gap-2">{categories.map((category) => <span key={category} className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">{category}</span>)}</div></form><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-3">Product</th><th className="p-3">Category</th><th className="p-3">Price</th><th className="p-3">Stock</th><th className="p-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-800">{filteredProducts.map((item) => <tr key={item.id}><td className="p-3"><div className="flex items-center gap-3"><img src={item.image || '/favicon.svg'} alt={item.name} onError={(event) => { event.currentTarget.src = '/favicon.svg'; }} className="h-12 w-12 rounded-xl bg-slate-800 object-contain" /><div><p className="font-bold text-white">{item.name}</p><p className="text-xs text-slate-500">{item.unit}</p></div></div></td><td className="p-3 text-slate-400">{item.category}</td><td className="p-3">₹{item.price}</td><td className="p-3">{item.stock_quantity ?? item.stock}</td><td className="p-3"><button onClick={() => editProduct(item)} className="mr-2 text-blue-300"><Pencil className="h-4 w-4" /></button><button onClick={() => deleteProduct(item)} className="text-rose-300"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody></table></div></section>}
+      {active === 'posters' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6">
+        <div className="mb-5"><h2 className="font-black">Poster / Wallpaper</h2><p className="mt-1 text-xs text-slate-400">Homepage carousel ke liye promotional posters upload, reorder ya delete karein.</p></div>
+        <form onSubmit={uploadPoster} className="mb-6 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+          <label className="block text-xs font-bold text-slate-300">Upload poster
+            <span className="mt-1 block text-[11px] font-normal text-slate-500">Recommended ratio: 2:1 (for example 1200 × 600 px)</span>
+            <input required type="file" accept="image/*" onChange={(event) => setPosterFile(event.target.files?.[0] || null)} className="mt-3 block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:text-xs file:font-bold file:text-slate-950" />
+          </label>
+          <button disabled={uploadingPoster} className="mt-4 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950 disabled:cursor-wait disabled:opacity-60">{uploadingPoster ? 'Uploading…' : 'Upload Poster'}</button>
+        </form>
+        <div className="space-y-3">
+          {posters.length === 0 ? <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">No posters uploaded yet.</p> : posters.map((poster, posterIndex) => (
+            <div key={poster.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-3">
+              <img src={poster.image_url} alt="" className="h-16 w-28 rounded-lg object-cover" />
+              <span className="flex-1 text-xs font-bold text-slate-400">Slide {posterIndex + 1}</span>
+              <button type="button" onClick={() => movePoster(poster, -1)} disabled={posterIndex === 0} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold disabled:opacity-30" aria-label="Move poster up">↑</button>
+              <button type="button" onClick={() => movePoster(poster, 1)} disabled={posterIndex === posters.length - 1} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold disabled:opacity-30" aria-label="Move poster down">↓</button>
+              <button type="button" onClick={() => deletePoster(poster)} className="rounded-lg bg-rose-950 px-2.5 py-2 text-rose-300" aria-label="Delete poster"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ))}
+        </div>
+      </section>}
       {active === 'inventory' && <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-6">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <TriangleAlert className="h-5 w-5 text-amber-300" />
