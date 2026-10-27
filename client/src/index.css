@@ -64,6 +64,11 @@ html.dark .shadow-sm, html.dark .shadow-xl { box-shadow: 0 10px 25px rgb(2 6 23 
 }
 .qc-sheet-up { animation: qc-sheet-up 0.28s ease-out both; }
 
+/* Subtle festive accent that keeps the green brand primary. */
+.sc-add-cart:hover:not(:disabled) {
+  box-shadow: 0 0 0 2px rgb(245 158 11 / 0.12), 0 5px 16px rgb(217 119 6 / 0.2);
+}
+
 /* ---- 10-sec order confirm overlay (calm / premium / soft) ---- */
 @keyframes sc-overlay-in {
   from { opacity: 0; }

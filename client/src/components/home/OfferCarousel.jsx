@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BadgePercent, Check, Copy, Timer, Truck } from 'lucide-react';
+import { BadgePercent, Check, Copy, Sparkles, Timer, Truck } from 'lucide-react';
 
 const AUTOPLAY_MS = 4000;
 
@@ -11,7 +11,7 @@ const OfferCarousel = () => {
   const [index, setIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const pausedRef = useRef(false);
-  const count = 3;
+  const count = 4;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -110,12 +110,27 @@ const OfferCarousel = () => {
                 </p>
               </div>
             </div>
+
+            {/* Banner 4: Diwali special */}
+            <div className="w-full shrink-0 bg-[linear-gradient(120deg,#9a3412,#d97706_55%,#f59e0b)] p-5 text-white sm:p-6">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15">
+                  <Sparkles className="h-6 w-6 text-amber-100" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xl font-black tracking-tight sm:text-2xl">Diwali Special - Flat 20% Off</p>
+                  <p className="mt-0.5 truncate text-xs text-orange-50">
+                    Sweets, dry fruits & festive essentials
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="mt-2.5 flex items-center justify-center gap-1.5" role="tablist" aria-label="Banner selector">
-        {[0, 1, 2].map((i) => (
+        {[0, 1, 2, 3].map((i) => (
           <button
             key={i}
             type="button"

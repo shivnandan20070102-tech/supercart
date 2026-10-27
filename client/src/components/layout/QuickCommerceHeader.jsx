@@ -257,7 +257,12 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
                   <ShoppingCart className="h-6 w-6 -rotate-6" />
                 </button>
                 <div className="min-w-0 leading-tight">
-                  <p className="text-[11px] font-semibold text-emerald-50">SuperCart</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] font-semibold text-emerald-50">SuperCart</p>
+                    <span className="whitespace-nowrap rounded-full border border-amber-300/35 bg-amber-300/10 px-2 py-0.5 text-[10px] font-bold text-amber-200">
+                      Happy Diwali! 🪔
+                    </span>
+                  </div>
                   <p className="whitespace-nowrap text-xl font-black tracking-tight">
                     <span className="text-amber-300">{DELIVERY_ETA_MINUTES}</span> minutes
                   </p>

@@ -6,6 +6,7 @@ export const CATEGORIES = [
   { id: 'staples', name: 'Atta, Rice & Dal', icon: 'Wheat' },
   { id: 'snacks', name: 'Snacks & Beverages', icon: 'Coffee' },
   { id: 'oils-spices', name: 'Oils & Masalas', icon: 'Flame' },
+  { id: 'diwali-essentials', name: 'Diwali Essentials', icon: 'Sparkles' },
 ];
 
 export const MOCK_PRODUCTS = [

@@ -140,7 +140,7 @@ const ProductCard = ({ product }) => {
               disabled={!canOrder}
               title={outOfStock ? 'Out of Stock' : 'Add to cart'}
               onClick={() => addToCart(product)}
-              className="flex items-center justify-center gap-1 rounded-xl border border-emerald-500/30 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition-all shadow-xs hover:border-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              className="sc-add-cart flex items-center justify-center gap-1 rounded-xl border border-emerald-500/30 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition-all shadow-xs hover:border-emerald-600 hover:bg-emerald-600 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>{outOfStock ? 'OUT OF STOCK' : 'ADD'}</span>
