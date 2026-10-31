@@ -549,11 +549,18 @@ export const AuthProvider = ({ children }) => {
       // - login vs signup me OAuth flow same hota hai: naya email hoga to
       //   `ensureOAuthProfile` nayi row INSERT karke account bana deta hai,
       //   purana email hoga to seedha login. Isliye `mode` sirf tracking ke liye.
-      const redirectTo = `${window.location.origin}/`;
+      const inApp =
+        typeof window !== 'undefined' &&
+        !!window.SupercartApp &&
+        typeof window.SupercartApp.openLogin === 'function';
+      const redirectTo = inApp
+        ? window.SupercartApp.redirectUri()
+        : `${window.location.origin}/`;
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo,
+          skipBrowserRedirect: inApp,
           queryParams: {
             prompt: 'select_account',
           },
@@ -568,6 +575,9 @@ export const AuthProvider = ({ children }) => {
           );
         }
         throw error;
+      }
+      if (inApp && data?.url) {
+        window.SupercartApp.openLogin(data.url);
       }
       return { success: true, data };
     } catch (error) {
