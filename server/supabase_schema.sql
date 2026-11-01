@@ -7,8 +7,11 @@
 CREATE TABLE IF NOT EXISTS public.categories (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    image_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS image_url TEXT;
 
 INSERT INTO public.categories (name)
 VALUES

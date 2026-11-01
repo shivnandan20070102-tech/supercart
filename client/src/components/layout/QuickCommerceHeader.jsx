@@ -21,7 +21,7 @@ import { useStore } from '../../context/StoreContext';
 import { supabase } from '../../config/supabase';
 import useDeliveryAddress from '../../hooks/useDeliveryAddress';
 import AddressPicker from '../grocery/AddressPicker';
-import { fetchCategories } from '../../services/categories';
+import { fetchCategoryRows } from '../../services/categories';
 import {
   DELIVERY_ETA_MINUTES,
   SEARCH_SUGGESTIONS,
@@ -79,8 +79,8 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
     let mounted = true;
     const loadCategories = async () => {
       try {
-        const names = await fetchCategories();
-        if (mounted) setCategories([{ id: 'all', name: 'All Categories', icon: 'Sparkles' }, ...names.map((name) => ({ id: name, name, icon: 'Sparkles' }))]);
+        const rows = await fetchCategoryRows();
+        if (mounted) setCategories([{ id: 'all', name: 'All Categories', icon: 'Sparkles' }, ...rows.map((category) => ({ ...category, id: category.name, icon: 'Sparkles' }))]);
       } catch (error) {
         console.error('Failed to load categories:', error);
       }

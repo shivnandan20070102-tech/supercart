@@ -1,11 +1,13 @@
 import { supabase } from '../config/supabase';
 
-export const fetchCategories = async () => {
+export const fetchCategoryRows = async () => {
   const { data, error } = await supabase
     .from('categories')
-    .select('name')
+    .select('id,name,image_url')
     .order('name', { ascending: true });
 
   if (error) throw error;
-  return (data || []).map((category) => String(category.name || '').trim()).filter(Boolean);
+  return (data || []).filter((category) => String(category.name || '').trim());
 };
+
+export const fetchCategories = async () => (await fetchCategoryRows()).map((category) => String(category.name).trim());
