@@ -21,25 +21,40 @@ const statusContent = {
 const DeliveryApprovalStatus = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState('pending');
+  const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
     let active = true;
+    let removeChannel;
     const loadStatus = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         navigate('/delivery/login', { replace: true });
         return;
       }
-      const { data: profile } = await supabase.from('delivery_profiles').select('approval_status').eq('user_id', user.id).maybeSingle();
+      const { data: profile } = await supabase.from('delivery_profiles').select('approval_status, rejection_reason').eq('user_id', user.id).maybeSingle();
       if (!active) return;
       if (String(profile?.approval_status || 'pending').toLowerCase() === 'approved') {
         navigate('/delivery/dashboard', { replace: true });
         return;
       }
       setStatus(String(profile?.approval_status || 'pending').toLowerCase());
+      setRejectionReason(profile?.rejection_reason || '');
+      const channel = supabase
+        .channel(`delivery-approval-screen-${user.id}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'delivery_profiles', filter: `user_id=eq.${user.id}` }, ({ new: updated }) => {
+          const nextStatus = String(updated?.approval_status || 'pending').toLowerCase();
+          if (nextStatus === 'approved') navigate('/delivery/dashboard', { replace: true });
+          else if (active) {
+            setStatus(nextStatus);
+            setRejectionReason(updated?.rejection_reason || '');
+          }
+        })
+        .subscribe();
+      return () => supabase.removeChannel(channel);
     };
-    loadStatus();
-    return () => { active = false; };
+    loadStatus().then((cleanup) => { removeChannel = cleanup; });
+    return () => { active = false; if (removeChannel) removeChannel(); };
   }, [navigate]);
 
   const content = statusContent[status] || statusContent.pending;
@@ -57,10 +72,11 @@ const DeliveryApprovalStatus = () => {
         <Icon className={`mx-auto mt-6 h-10 w-10 ${content.tone}`} />
         <h1 className="mt-4 text-2xl font-black">{content.title}</h1>
         <p className="mt-3 text-sm leading-6 text-slate-400">{content.message}</p>
+        {status === 'rejected' && rejectionReason && <p className="mt-3 rounded-xl bg-rose-950/60 p-3 text-left text-xs font-bold text-rose-300">Reason: {rejectionReason}</p>}
         {status === 'pending' && <div className="mt-5 flex items-center justify-center gap-2 text-xs font-bold text-emerald-300"><CheckCircle2 className="h-4 w-4" /> After admin approval, log in to access the dashboard.</div>}
         <div className="mt-7 flex flex-col gap-3">
           <button type="button" onClick={logout} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700"><LogOut className="h-4 w-4" /> Logout</button>
-          <Link to="/delivery/login" className="text-xs font-bold text-emerald-400 hover:text-emerald-300">Back to login</Link>
+          {status === 'rejected' ? <Link to="/delivery/profile-setup" className="text-xs font-bold text-emerald-400 hover:text-emerald-300">Update profile</Link> : <Link to="/delivery/login" className="text-xs font-bold text-emerald-400 hover:text-emerald-300">Back to login</Link>}
         </div>
       </div>
     </div>

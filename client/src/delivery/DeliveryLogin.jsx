@@ -31,9 +31,9 @@ const DeliveryLogin = () => {
           replace: true,
           state: { approvalMessage: 'Your application has been approved!' },
         });
-      } else if (status === 'rejected') navigate('/delivery/profile', { replace: true });
+      } else if (status === 'rejected') navigate('/delivery/profile-setup', { replace: true });
       else if (profile?.profile_completed) navigate('/delivery/approval-pending', { replace: true });
-      else navigate('/delivery/profile', { replace: true });
+      else navigate('/delivery/profile-setup', { replace: true });
     };
 
     const redirectIfAuthenticated = async () => {
@@ -42,7 +42,7 @@ const DeliveryLogin = () => {
       if (!active) return;
       const { data: deliveryProfile } = await supabase.from('delivery_profiles').select('approval_status, profile_completed').eq('user_id', user.id).maybeSingle();
       if (!active) return;
-      if (!deliveryProfile) return navigate('/delivery/profile', { replace: true });
+      if (!deliveryProfile) return navigate('/delivery/profile-setup', { replace: true });
 
       handleApprovalStatus(deliveryProfile);
       const channel = supabase
@@ -95,9 +95,9 @@ const DeliveryLogin = () => {
     const { data: deliveryProfile } = await supabase.from('delivery_profiles').select('approval_status, profile_completed').eq('user_id', user.id).maybeSingle();
     const status = String(deliveryProfile?.approval_status || 'pending').toLowerCase();
     if (status === 'approved') navigate('/delivery/dashboard');
-    else if (status === 'rejected') navigate('/delivery/profile');
+    else if (status === 'rejected') navigate('/delivery/profile-setup');
     else if (deliveryProfile?.profile_completed) navigate('/delivery/approval-pending');
-    else navigate('/delivery/profile');
+    else navigate('/delivery/profile-setup');
     setLoading(false);
   };
 

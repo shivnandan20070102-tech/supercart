@@ -9,7 +9,7 @@ const inputClass = 'mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-80
 const DeliverySignup = () => {
   const navigate = useNavigate();
   const { signUpWithEmail } = useAuth();
-  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirmPassword: '', referralCode: new URLSearchParams(window.location.search).get('ref')?.trim().toUpperCase() || '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirmPassword: '' });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,7 +39,7 @@ const DeliverySignup = () => {
     });
 
     if (!result.success) {
-      setError(result.message || 'Account could not be created.');
+      setError(/already|exists|registered/i.test(result.message || '') ? 'Delivery identity pehle se bani hui hai. Login karo.' : (result.message || 'Account could not be created.'));
       setLoading(false);
       return;
     }
@@ -66,30 +66,8 @@ const DeliverySignup = () => {
       return;
     }
 
-    const referralCode = form.referralCode.trim().toUpperCase();
-    if (referralCode && user) {
-      const { data: referrer } = await supabase
-        .from('delivery_profiles')
-        .select('user_id')
-        .eq('referral_code', referralCode)
-        .maybeSingle();
-      if (referrer?.user_id && referrer.user_id !== user.id) {
-        const { error: referralError } = await supabase.from('referrals').upsert({
-          referrer_id: referrer.user_id,
-          referred_user_id: user.id,
-          referral_code: referralCode,
-          bonus_amount: 0,
-        });
-        if (referralError && !/duplicate|unique/i.test(referralError.message || '')) {
-          setError(referralError.message);
-          setLoading(false);
-          return;
-        }
-      }
-    }
-
     setMessage('Delivery account created. Redirecting...');
-    window.setTimeout(() => navigate('/delivery/profile'), 700);
+    window.setTimeout(() => navigate('/delivery/profile-setup'), 700);
     setLoading(false);
   };
 
@@ -120,10 +98,6 @@ const DeliverySignup = () => {
         <label className="mt-4 block text-xs font-bold text-slate-300">Confirm Password
           <span className="relative block"><LockKeyhole className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type={showPassword ? 'text' : 'password'} name="confirmPassword" required minLength={6} value={form.confirmPassword} onChange={updateField} className={`${inputClass} pl-10 pr-11`} placeholder="Re-enter your password" /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide passwords' : 'Show passwords'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></span>
         </label>
-        <label className="mt-4 block text-xs font-bold text-slate-300">Referral Code (optional)
-          <input name="referralCode" value={form.referralCode} onChange={updateField} className={inputClass} placeholder="e.g. SC1234ABCD" autoCapitalize="characters" />
-        </label>
-
         <button type="submit" disabled={loading} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3.5 text-sm font-black text-slate-950 transition hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60">
           {loading ? 'Creating account...' : 'Create delivery account'} <ArrowRight className="h-4 w-4" />
         </button>

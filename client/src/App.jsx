@@ -154,6 +154,7 @@ function App() {
               <Route path="/delivery/reset-password" element={<DeliveryResetPassword />} />
               <Route path="/delivery/approval-pending" element={<DeliveryApprovalStatus />} />
               <Route path="/delivery/approval-status" element={<DeliveryApprovalStatus />} />
+              <Route path="/delivery/profile-setup" element={<DeliveryProfile />} />
               <Route path="/delivery/profile" element={<DeliveryProfile />} />
               <Route path="/delivery/activity/:type" element={<DeliveryGuard><DeliveryActivity /></DeliveryGuard>} />
               <Route path="/delivery/order/:id" element={<DeliveryGuard><DeliveryOrderDetail /></DeliveryGuard>} />

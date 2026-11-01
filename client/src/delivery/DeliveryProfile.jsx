@@ -65,7 +65,7 @@ const AccordionSection = ({ id, title, icon: Icon, openSection, setOpenSection, 
 const DeliveryProfile = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', phone: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', vehicle_type: '', vehicle_number: '', emergency_contact: '' });
   const [profilePhoto, setProfilePhoto] = useState(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState('');
   const [files, setFiles] = useState({});
@@ -114,8 +114,8 @@ const DeliveryProfile = () => {
       setApprovalStatus(String(profile?.approval_status || 'pending').toLowerCase());
       // Pehli baar setup (profile_completed !== true) → Home Area step dikhega.
       // Approve ke baad ka Profile page → section hidden rahega.
-      if (mounted) setIsFirstSetup(profile?.profile_completed !== true);
-      setForm({ name: profile?.name || current.user_metadata?.full_name || '', email: profile?.email || current.email || '', phone: profile?.phone || current.user_metadata?.phone || '' });
+      if (mounted) setIsFirstSetup(profile?.profile_completed !== true || String(profile?.approval_status || '').toLowerCase() === 'rejected');
+      setForm({ name: profile?.name || current.user_metadata?.full_name || '', email: profile?.email || current.email || '', phone: profile?.phone || current.user_metadata?.phone || '', vehicle_type: profile?.vehicle_type || '', vehicle_number: profile?.vehicle_number || '', emergency_contact: profile?.emergency_contact || '' });
       setProfilePhotoPreview(profile?.profile_photo_url || '');
       setSavedFiles({ aadhar_card_url: profile?.aadhar_card_url || '', driving_license_url: profile?.driving_license_url || '', pan_card_url: profile?.pan_card_url || '', bike_image_url: profile?.bike_image_url || '' });
       // Pehle se auto-assigned Home Store ho to naam dikhao (column SQL se
@@ -178,6 +178,11 @@ const DeliveryProfile = () => {
   const choosePhoto = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setNotice({ type: 'error', text: 'Profile photo must be an image.' });
+      event.target.value = '';
+      return;
+    }
     if (file.size > MAX_FILE_SIZE) {
       setNotice({ type: 'error', text: 'File size must be smaller than 3MB' });
       event.target.value = '';
@@ -190,6 +195,13 @@ const DeliveryProfile = () => {
   const chooseDocument = (key, event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf';
+    if (!isImage && (!isPdf || key === 'bike_image_url')) {
+      setNotice({ type: 'error', text: 'Only image or PDF files are allowed; bike image must be an image.' });
+      event.target.value = '';
+      return;
+    }
     if (file.size > MAX_FILE_SIZE) {
       setNotice({ type: 'error', text: 'File size must be smaller than 3MB' });
       event.target.value = '';
@@ -296,29 +308,43 @@ const DeliveryProfile = () => {
     // (service-area ke bahar block). Baad ke Profile edits par section hidden
     // hai — wahan null se existing value wipe mat karo (key hi mat bhejo).
     const finalHomeStoreId = homeStore?.id ?? existingHomeStore?.id ?? null;
+    if (isFirstSetup && (!profilePhoto && !profilePhotoPreview || !form.vehicle_type.trim() || !form.vehicle_number.trim() || !form.emergency_contact.trim())) {
+      setSaving(false);
+      setNotice({ type: 'error', text: 'Profile section complete karo: photo, vehicle type/number aur emergency contact zaroori hain.' });
+      setOpenSection('personal');
+      return;
+    }
     if (finalHomeStoreId == null && isFirstSetup) {
       setSaving(false);
       setNotice({ type: 'error', text: 'First pin your location in the "Your Area / Home Store" section — a store within 15 km is required.' });
       setOpenSection('home-area');
       return;
     }
+    if (isFirstSetup && documents.some((document) => !files[document.key] && !savedFiles[document.key])) {
+      setSaving(false);
+      setNotice({ type: 'error', text: 'Documents section mein Aadhar, License, PAN aur bike image chaaron upload karo.' });
+      setOpenSection('documents');
+      return;
+    }
     try {
       const profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
       const urls = {};
       for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
-      const approvalRequested = isFirstSetup;
-      const payload = {
-        user_id: user.id,
-        ...form,
-        referral_code: referralCode,
-        settings,
-        profile_photo_url: profilePhotoUrl,
-        ...urls,
-        profile_completed: true,
-        ...(approvalRequested ? { approval_status: 'pending', rejection_reason: null } : { approval_status: approvalStatus }),
-      };
-      if (finalHomeStoreId != null) payload.home_store_id = finalHomeStoreId;
-      const { error } = await supabase.from('delivery_profiles').upsert(payload, { onConflict: 'user_id' });
+      const approvalRequested = isFirstSetup || approvalStatus === 'rejected';
+      const { error } = await supabase.rpc('submit_delivery_profile', {
+        p_name: form.name.trim(),
+        p_phone: form.phone.trim(),
+        p_vehicle_type: form.vehicle_type.trim(),
+        p_vehicle_number: form.vehicle_number.trim().toUpperCase(),
+        p_emergency_contact: form.emergency_contact.trim(),
+        p_profile_photo_url: profilePhotoUrl,
+        p_aadhar_card_url: urls.aadhar_card_url,
+        p_driving_license_url: urls.driving_license_url,
+        p_pan_card_url: urls.pan_card_url,
+        p_bike_image_url: urls.bike_image_url,
+        p_home_store_id: finalHomeStoreId,
+        p_request_approval: approvalRequested,
+      });
       if (error) throw error;
       await supabase.from('users').update({ name: form.name, email: form.email, phone: form.phone }).eq('id', user.id);
       setSavedFiles(urls);
@@ -332,39 +358,6 @@ const DeliveryProfile = () => {
         setNotice({ type: 'success', text: 'Profile saved successfully.' });
       }
     } catch (error) {
-      // home_store_id column abhi Supabase me na bani ho (SQL pending) to
-      // profile save hona na ruke — bina home store ke save karo, Admin
-      // baad me Home Store set kar dega.
-      if (/home_store_id|schema cache|column/i.test(error?.message || '')) {
-        try {
-          const approvalRequested = isFirstSetup;
-          const retryPayload = {
-            user_id: user.id,
-            ...form,
-            referral_code: referralCode,
-            settings,
-            profile_photo_url: profilePhotoPreview,
-            profile_completed: true,
-            ...(approvalRequested ? { approval_status: 'pending', rejection_reason: null } : { approval_status: approvalStatus }),
-          };
-          delete retryPayload.home_store_id;
-          const retry = await supabase.from('delivery_profiles').upsert(retryPayload, { onConflict: 'user_id' });
-          if (retry.error) throw retry.error;
-          if (approvalRequested) {
-            setApprovalStatus('pending');
-            setNotice({ type: 'error', text: 'Profile saved, but Home Store was not saved — run server/supabase_delivery_home_store.sql in Supabase, then pin your area again.' });
-            window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 2500);
-          } else {
-            setNotice({ type: 'error', text: 'Profile saved, but Home Store was not saved — run server/supabase_delivery_home_store.sql in Supabase, then pin your area again.' });
-          }
-          return;
-        } catch (retryError) {
-          setNotice({ type: 'error', text: retryError.message || 'Could not save profile.' });
-          return;
-        } finally {
-          setSaving(false);
-        }
-      }
       setNotice({ type: 'error', text: error.message || 'Could not save profile.' });
     } finally { setSaving(false); }
   };
@@ -442,6 +435,7 @@ const DeliveryProfile = () => {
   return <div className={`delivery-profile min-h-screen px-4 py-8 sm:px-8 ${settings.darkTheme ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'}`}><div className="mx-auto max-w-4xl">
     <header className="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">SuperCart Delivery</p><h1 className="mt-2 text-3xl font-black">Delivery Profile</h1></div><div className="flex flex-wrap items-center gap-2"><Link to="/delivery" className="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-bold text-slate-300 hover:border-emerald-500 hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to orders</Link><button type="button" onClick={logout} className="flex items-center gap-2 rounded-xl border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm font-bold text-rose-300 hover:bg-rose-900 hover:text-white"><LogOut className="h-4 w-4" /> Logout</button></div></header>
     {notice.text && <div className={`mb-5 flex items-center gap-2 rounded-xl p-3 text-sm font-bold ${notice.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>{notice.type === 'success' && <CheckCircle2 className="h-4 w-4" />}{notice.text}</div>}
+    {!isFirstSetup && (<div>
     <AccordionSection id="activity" title="Activity & Earnings" icon={Wallet} openSection={openSection} setOpenSection={setOpenSection}>
     <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {[
@@ -502,9 +496,10 @@ const DeliveryProfile = () => {
       </div>
     </section>
     </AccordionSection>
+    </div>)}
     <form onSubmit={saveProfile} className="space-y-6">
-      <AccordionSection id="personal" title="Personal Details" icon={UserRound} openSection={openSection} setOpenSection={setOpenSection}>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Keep your delivery partner information current.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
+      <AccordionSection id="personal" title="Profile" icon={UserRound} openSection={openSection} setOpenSection={setOpenSection}>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Complete your delivery partner profile.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label><label className="text-xs font-bold text-slate-300">Vehicle Type<input required name="vehicle_type" value={form.vehicle_type} onChange={(event) => setForm({ ...form, vehicle_type: event.target.value })} className={inputClass} placeholder="Bike, scooter, etc." /></label><label className="text-xs font-bold text-slate-300">Vehicle Number<input required name="vehicle_number" value={form.vehicle_number} onChange={(event) => setForm({ ...form, vehicle_number: event.target.value.toUpperCase() })} className={inputClass} placeholder="DL 01 AB 1234" /></label><label className="text-xs font-bold text-slate-300 sm:col-span-2">Emergency Contact<input required name="emergency_contact" value={form.emergency_contact} onChange={(event) => setForm({ ...form, emergency_contact: event.target.value })} className={inputClass} placeholder="Name and phone number" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
       </AccordionSection>
       {/* Home Area step SIRF pehli-baari setup me — approve ke baad wale Profile page par hidden */}
       {isFirstSetup && (

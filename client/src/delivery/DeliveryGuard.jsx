@@ -39,17 +39,17 @@ export default function DeliveryGuard({ children }) {
       if (!active) return;
 
       if (!deliveryProfile) {
-        setState({ loading: false, allowed: false, redirect: '/delivery/profile' });
+        setState({ loading: false, allowed: false, redirect: '/delivery/profile-setup' });
         return;
       }
 
       const approvalStatus = String(deliveryProfile.approval_status || 'pending').toLowerCase();
       if (approvalStatus === 'rejected') {
-        setState({ loading: false, allowed: false, redirect: '/delivery/profile' });
+        setState({ loading: false, allowed: false, redirect: '/delivery/profile-setup' });
         return;
       }
       if (approvalStatus !== 'approved') {
-        setState({ loading: false, allowed: false, redirect: deliveryProfile.profile_completed ? '/delivery/approval-pending' : '/delivery/profile' });
+        setState({ loading: false, allowed: false, redirect: deliveryProfile.profile_completed ? '/delivery/approval-pending' : '/delivery/profile-setup' });
         return;
       }
 

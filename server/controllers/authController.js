@@ -48,6 +48,12 @@ export const signupUser = async (req, res) => {
         message: authError?.message || 'Account could not be created. Please try again.',
       });
     }
+    if (panel === 'delivery' && authData.user.identities && authData.user.identities.length === 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'Delivery identity already exists. Login karo.',
+      });
+    }
 
     const { error: roleError } = await supabase
       .from('user_roles')
