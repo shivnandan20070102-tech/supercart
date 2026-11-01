@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
+import { getDisplayEmail, getPanelAuthEmail, isReservedPanelEmail, normalizePanelEmail } from '../utils/panelEmail';
 import {
   clearLoginAttempts,
   clearSignupAttempts,
@@ -150,7 +151,7 @@ export const AuthProvider = ({ children }) => {
       const { error: insertError } = await supabase.from('users').insert({
         id: authUser.id,
         name: fallbackName,
-        email: authUser.email,
+        email: getDisplayEmail(authUser.email),
         phone: authUser.user_metadata?.phone || '',
         role: 'customer',
       });
@@ -398,12 +399,17 @@ export const AuthProvider = ({ children }) => {
   // Backend /api/auth/login limiter direct-API bots ko rokta hai; session
   // yahin Supabase se banta hai taaki complaints/orders fallback na toote.
   const signInWithEmail = async (email, password, expectedRole = '') => {
-    const cleanEmail = String(email || '').trim();
+    const panel = expectedRole === 'delivery_partner' ? 'delivery' : expectedRole === 'store_manager' ? 'store_manager' : 'customer';
+    const cleanEmail = normalizePanelEmail(email);
+    if (panel === 'customer' && isReservedPanelEmail(cleanEmail)) {
+      return { success: false, message: 'Please use your original email address for the User Panel.' };
+    }
+    const authEmail = getPanelAuthEmail(cleanEmail, panel);
     const preBlocked = getLoginBlockState(cleanEmail);
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true, retryAfterSeconds: preBlocked.retryAfterSeconds || 0 };
     }
-    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email: authEmail, password });
     if (error) {
       const friendly = toFriendlySupabaseAuthError(error);
       const isSupabaseRateLimited = friendly !== String(error.message || '');
@@ -422,13 +428,12 @@ export const AuthProvider = ({ children }) => {
     clearLoginAttempts(cleanEmail);
     if (expectedRole) {
       const requiredRole = expectedRole === 'delivery_partner' ? 'delivery' : expectedRole;
-      const { data: roleRow, error: roleError } = await supabase
+      const { data: roleRows, error: roleError } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', data.user.id)
-        .eq('role', requiredRole)
-        .maybeSingle();
-      if (roleError || !roleRow) {
+        .limit(2);
+      if (roleError || roleRows?.length !== 1 || roleRows[0]?.role !== requiredRole) {
         await supabase.auth.signOut();
         return {
           success: false,
@@ -447,13 +452,30 @@ export const AuthProvider = ({ children }) => {
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true };
     }
+    const panel = role === 'delivery_partner' ? 'delivery' : role === 'store_manager' ? 'store_manager' : 'customer';
+    if (panel === 'customer' && isReservedPanelEmail(cleanEmail)) {
+      return { success: false, message: 'Reserved panel email tags are not allowed here.' };
+    }
+    const response = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email: cleanEmail, password, phone, panel }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      recordFailedSignupAttempt(cleanEmail);
+      return { success: false, message: result?.message || 'Account could not be created.' };
+    }
+    clearSignupAttempts(cleanEmail);
+    return { success: true, needsEmailConfirmation: result.needsEmailConfirmation !== false, message: result.message, user: result.data };
+    /*
     const requestedRole = role === 'delivery_partner' ? 'delivery' : role;
     // Supabase intentionally obscures existing-email signup errors. A
     // successful password check is therefore the reliable existing-account
     // path and adds only the role for this panel.
     const existingLogin = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     if (!existingLogin.error && existingLogin.data?.session) {
-      const roleResponse = await fetch('/api/auth/role', {
+      const roleResponse = await fetch('/api/auth/disabled-role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${existingLogin.data.session.access_token}` },
         body: JSON.stringify({ role: requestedRole }),
@@ -482,7 +504,7 @@ export const AuthProvider = ({ children }) => {
           return { success: false, message: 'This email is already registered. Enter its correct password to add this panel.' };
         }
         const token = login.data.session.access_token;
-        const roleResponse = await fetch('/api/auth/role', {
+        const roleResponse = await fetch('/api/auth/disabled-role', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ role: requestedRole }),
@@ -511,11 +533,27 @@ export const AuthProvider = ({ children }) => {
         needsEmailConfirmation: true,
         message: 'Account created. Please check your email and verify your account before signing in.',
       };
+
+      const resendVerificationEmail = async (email, role = 'customer') => {
+        const panel = role === 'delivery_partner' ? 'delivery' : role === 'store_manager' ? 'store_manager' : 'customer';
+        const cleanEmail = normalizePanelEmail(email);
+        if (panel === 'customer' && isReservedPanelEmail(cleanEmail)) {
+          return { success: false, message: 'Please use your original email address.' };
+        }
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: getPanelAuthEmail(cleanEmail, panel),
+          options: { emailRedirectTo: window.location.origin },
+        });
+        if (error) return { success: false, message: error.message };
+        return { success: true, message: 'Verification email sent.' };
+      };
     }
 
     const activeUser = saveSupabaseUser(data.user, 'email');
     localStorage.setItem('supercart_token', data.session.access_token);
     return { success: true, user: activeUser };
+    */
   };
 
   const logout = async () => {
@@ -627,7 +665,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, authNotice, clearAuthNotice, login, updateProfile, updateLocation, logout, signInWithEmail, signUpWithEmail, signInWithGoogle }}>
+    <AuthContext.Provider value={{ user, loading, authNotice, clearAuthNotice, login, updateProfile, updateLocation, logout, signInWithEmail, signUpWithEmail, resendVerificationEmail, signInWithGoogle }}>
       {children}
     </AuthContext.Provider>
   );

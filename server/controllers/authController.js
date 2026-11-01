@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import generateToken from '../utils/generateToken.js';
+import { getPanelAuthEmail, isReservedPanelEmail, normalizePanelEmail } from '../utils/panelEmail.js';
 
 // In-memory fallback if table is not created yet
 let localUsers = [];
@@ -11,21 +13,32 @@ let localUsers = [];
 export const signupUser = async (req, res) => {
   try {
     const signupInput = req.body;
-    if (!signupInput.name || !signupInput.email || !signupInput.password) {
+    const panel = signupInput.panel === 'delivery' ? 'delivery' : signupInput.panel === 'store_manager' ? 'store_manager' : 'customer';
+    const plainEmail = normalizePanelEmail(signupInput.email);
+    if (!signupInput.name || !plainEmail || !signupInput.password) {
       return res.status(400).json({
         success: false,
         message: 'Please provide name, email, and password',
       });
     }
 
+    if (panel === 'customer' && isReservedPanelEmail(plainEmail)) {
+      return res.status(400).json({ success: false, message: 'Reserved panel email tags are not allowed.' });
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(503).json({ success: false, message: 'Signup is not configured on the backend.' });
+    }
+    const authEmail = getPanelAuthEmail(plainEmail, panel);
     const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: signupInput.email.toLowerCase().trim(),
+      email: authEmail,
       password: signupInput.password,
       options: {
         data: {
           full_name: signupInput.name.trim(),
           phone: signupInput.phone?.trim() || '',
+          role: panel,
         },
+        emailRedirectTo: process.env.AUTH_EMAIL_REDIRECT_URL || undefined,
       },
     });
 
@@ -36,6 +49,27 @@ export const signupUser = async (req, res) => {
       });
     }
 
+    const { error: roleError } = await supabase
+      .from('user_roles')
+      .insert({ user_id: authData.user.id, role: panel });
+    if (roleError) {
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ success: false, message: 'Account role could not be assigned.' });
+    }
+    const { error: profileError } = await supabase
+      .from('users')
+      .upsert({
+        id: authData.user.id,
+        name: signupInput.name.trim(),
+        email: plainEmail,
+        phone: signupInput.phone?.trim() || '',
+        role: panel,
+      }, { onConflict: 'id' });
+    if (profileError) {
+      await supabase.from('user_roles').delete().eq('user_id', authData.user.id);
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ success: false, message: 'Account profile could not be created.' });
+    }
     return res.status(201).json({
       success: true,
       message: authData.session
@@ -45,9 +79,9 @@ export const signupUser = async (req, res) => {
       data: {
         id: authData.user.id,
         name: authData.user.user_metadata?.full_name || signupInput.name,
-        email: authData.user.email,
+        email: plainEmail,
         phone: authData.user.user_metadata?.phone || '',
-        role: 'customer',
+        role: panel,
         token: authData.session?.access_token,
       },
     });
@@ -146,40 +180,17 @@ export const signupUser = async (req, res) => {
   }
 };
 
-// Password verification happens in the panel client before this endpoint is
-// called; clients never receive permission to write user_roles directly.
-export const addUserRole = async (req, res) => {
-  const requestedRole = String(req.body?.role || '').trim().toLowerCase();
-  if (!['customer', 'delivery', 'store_manager'].includes(requestedRole)) {
-    return res.status(400).json({ success: false, message: 'Invalid panel role.' });
-  }
-  if (!req.user?.id) {
-    return res.status(401).json({ success: false, message: 'Login required.' });
-  }
-
-  const { error } = await supabase
-    .from('user_roles')
-    .upsert({ user_id: req.user.id, role: requestedRole }, { onConflict: 'user_id,role' });
-  if (error) {
-    console.error('Role assignment failed:', error.message);
-    return res.status(500).json({ success: false, message: 'This panel role could not be added.' });
-  }
-  return res.status(200).json({ success: true, role: requestedRole });
-};
-
 // Admin-created store manager. This must use Supabase Auth admin APIs so the
 // account is confirmed immediately and the password entered by Admin is valid.
 export const createStoreManager = async (req, res) => {
   try {
-    const { name, email, password, phone, storeId } = req.body || {};
-    const cleanEmail = String(email || '').trim().toLowerCase();
+    const { name, email, phone, storeId } = req.body || {};
+    const cleanEmail = normalizePanelEmail(email);
+    const authEmail = getPanelAuthEmail(cleanEmail, 'store_manager');
     const parsedStoreId = Number(storeId);
 
-    if (!name?.trim() || !cleanEmail || !password || !Number.isInteger(parsedStoreId)) {
-      return res.status(400).json({ success: false, message: 'Name, email, password, and store are required.' });
-    }
-    if (String(password).length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+    if (!name?.trim() || !cleanEmail || !Number.isInteger(parsedStoreId)) {
+      return res.status(400).json({ success: false, message: 'Name, email, and store are required.' });
     }
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return res.status(503).json({
@@ -231,18 +242,29 @@ export const createStoreManager = async (req, res) => {
     const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listError) throw listError;
     const existingAuthUser = (authUsers?.users || []).find(
-      (authUser) => String(authUser.email || '').toLowerCase() === cleanEmail,
+      (authUser) => String(authUser.email || '').toLowerCase() === authEmail,
     );
 
     let userId;
     if (existingAuthUser) {
-      // Never overwrite or reset an existing user's password.
+      const { data: existingRole, error: existingRoleError } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', existingAuthUser.id)
+        .maybeSingle();
+      if (existingRoleError) throw existingRoleError;
+      if (existingRole && existingRole.role !== 'store_manager') {
+        return res.status(409).json({
+          success: false,
+          message: 'A different panel identity already uses this tagged email.',
+        });
+      }
       userId = existingAuthUser.id;
     } else {
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
-        email: cleanEmail,
-        password: String(password),
-        email_confirm: true,
+        email: authEmail,
+        password: crypto.randomBytes(24).toString('base64url'),
+        email_confirm: false,
         user_metadata: userMetadata,
       });
       if (createError || !created?.user) {
@@ -263,13 +285,17 @@ export const createStoreManager = async (req, res) => {
 
     const { error: roleError } = await supabase
       .from('user_roles')
-      .upsert({ user_id: userId, role: 'store_manager' }, { onConflict: 'user_id,role' });
+      .upsert({ user_id: userId, role: 'store_manager' }, { onConflict: 'user_id' });
     if (roleError) throw roleError;
 
     const { error: linkError } = await supabase
       .from('store_staff')
       .upsert({ store_id: parsedStoreId, user_id: userId }, { onConflict: 'store_id,user_id' });
     if (linkError) throw linkError;
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(authEmail, {
+      redirectTo: process.env.STORE_PASSWORD_RESET_REDIRECT_URL || process.env.PASSWORD_RESET_REDIRECT_URL,
+    });
+    if (resetError) console.warn('Store manager reset email warning:', resetError.message);
 
     return res.status(201).json({
       success: true,
@@ -401,7 +427,12 @@ export const loginUser = async (req, res) => {
 // attacker ko pata na chale kaunsi email registered hai).
 export const forgotPassword = async (req, res) => {
   try {
-    const email = String(req.body?.email || '').toLowerCase().trim();
+    const plainEmail = normalizePanelEmail(req.body?.email);
+    const panel = req.body?.panel === 'delivery' ? 'delivery' : req.body?.panel === 'store_manager' ? 'store_manager' : 'customer';
+    if (panel === 'customer' && isReservedPanelEmail(plainEmail)) {
+      return res.status(400).json({ success: false, message: 'Please use your original email address.' });
+    }
+    const email = getPanelAuthEmail(plainEmail, panel);
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({
         success: false,

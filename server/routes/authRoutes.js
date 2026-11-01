@@ -1,5 +1,5 @@
 import express from 'express';
-import { signupUser, loginUser, getUserProfile, forgotPassword, createStoreManager, addUserRole } from '../controllers/authController.js';
+import { signupUser, loginUser, getUserProfile, forgotPassword, createStoreManager } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { forgotPasswordLimiter, loginLimiter, signupLimiter } from '../middleware/rateLimit.js';
 
@@ -10,7 +10,6 @@ const router = express.Router();
 router.post('/signup', signupLimiter, signupUser);
 router.post('/register', signupLimiter, signupUser); // alias
 router.post('/login', loginLimiter, loginUser);
-router.post('/role', protect, addUserRole);
 router.post('/forgot-password', forgotPasswordLimiter, forgotPassword);
 router.post('/forgot_password', forgotPasswordLimiter, forgotPassword); // alias
 router.post('/store-manager', protect, createStoreManager);

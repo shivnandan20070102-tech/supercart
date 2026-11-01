@@ -33,7 +33,7 @@ const toTimeInput = (v) => {
   if (!m) return '';
   return `${m[1].padStart(2, '0')}:${m[2]}`;
 };
-const emptyManager = { name: '', email: '', phone: '', password: '' };
+const emptyManager = { name: '', email: '', phone: '' };
 
 const numOrNull = (v) => {
   if (v === '' || v == null) return null;
@@ -364,8 +364,8 @@ const StoresSection = ({ searchQuery = '' }) => {
   const createManager = async (e) => {
     e.preventDefault();
     const email = managerForm.email.trim().toLowerCase();
-    if (!managerForm.name.trim() || !email || managerForm.password.length < 6) {
-      showNotice('error', 'Enter a name, valid email, and a password of at least 6 characters.');
+    if (!managerForm.name.trim() || !email) {
+      showNotice('error', 'Enter a name and valid email.');
       return;
     }
     setSavingManager(true);
@@ -381,7 +381,6 @@ const StoresSection = ({ searchQuery = '' }) => {
         body: JSON.stringify({
           name: managerForm.name.trim(),
           email,
-          password: managerForm.password,
           phone: managerForm.phone.trim(),
           storeId: managerModal.id,
         }),
@@ -391,9 +390,7 @@ const StoresSection = ({ searchQuery = '' }) => {
         throw new Error(result?.message || `Manager creation failed (${response.status}).`);
       }
       setManagerModal(null);
-      showNotice('success', result.data?.existingAccount
-        ? `${result.message || 'Store Manager linked.'} The existing password was not changed.`
-        : `${result.message || `Manager "${managerForm.name.trim()}" created.`} Login is ready.`);
+      showNotice('success', `${result.message || `Manager "${managerForm.name.trim()}" created.`} A password setup email was sent.`);
       await loadAll();
     } catch (err) {
       showNotice('error', err.message || 'Manager account could not be created.');
@@ -908,8 +905,7 @@ const StoresSection = ({ searchQuery = '' }) => {
               <input value={managerForm.phone} onChange={(e) => setManagerForm({ ...managerForm, phone: e.target.value })} placeholder="+91-98XXXXXXX" className={`${inputCls} mt-1.5`} />
             </label>
             <label className="text-xs font-bold text-slate-400">
-              Password * (min 6 characters — share it with the manager)
-              <input required type="text" minLength={6} value={managerForm.password} onChange={(e) => setManagerForm({ ...managerForm, password: e.target.value })} placeholder="Strong password" className={`${inputCls} mt-1.5`} />
+              The manager will receive a password setup email.
             </label>
             <button
               type="submit"

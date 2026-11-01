@@ -1,5 +1,6 @@
 import { MOCK_PRODUCTS } from '../data/mockGroceryData';
 import { supabase } from '../config/supabase';
+import { getPanelAuthEmail } from '../utils/panelEmail';
 import { findNearestStore } from './nearestStore';
 import { decrementStockDirect } from './stock';
 import { calculateDeliveryCharge, isFreeDelivery } from '../config/store';
@@ -170,8 +171,9 @@ export const signupApi = async (userData) => {
 
 // Forgot password — backend rate-limited (3/hour/IP), down ho to direct Supabase.
 // 429 par fallback NAHI (block ka faisla final — friendly Hindi throw).
-export const forgotPasswordApi = async (email, redirectTo) => {
+export const forgotPasswordApi = async (email, redirectTo, panel = 'customer') => {
   const clean = String(email || '').trim();
+  const authEmail = getPanelAuthEmail(clean, panel);
   if (!clean) throw new Error('Please provide a valid email address');
   const urlsToTry = [`${API_BASE_URL}/api/auth/forgot-password`, `${API_BASE_URL}/forgot-password`];
   let lastNetworkError = null;
@@ -180,7 +182,7 @@ export const forgotPasswordApi = async (email, redirectTo) => {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: clean, ...(redirectTo ? { redirectTo } : {}) }),
+        body: JSON.stringify({ email: clean, panel, ...(redirectTo ? { redirectTo } : {}) }),
       });
       const json = await readJsonSafe(res);
       throwIfRateLimited(res, json);
@@ -199,7 +201,7 @@ export const forgotPasswordApi = async (email, redirectTo) => {
   }
   // Backend unreachable — direct Supabase (same UX message).
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+    const { error } = await supabase.auth.resetPasswordForEmail(authEmail, {
       ...(redirectTo ? { redirectTo } : {}),
     });
     if (error) {

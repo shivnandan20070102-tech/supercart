@@ -17,7 +17,7 @@ const DeliveryForgotPassword = () => {
     setLoading(true);
     try {
       // Backend rate-limited (3/hour/IP) — 429 par friendly Hindi, fallback nahi.
-      const res = await forgotPasswordApi(email.trim(), deliveryResetRedirectUrl);
+      const res = await forgotPasswordApi(email.trim(), deliveryResetRedirectUrl, 'delivery');
       setMessage(res?.message || 'If this email is registered, you will receive a reset link');
     } catch (e) {
       if (e?.isRateLimited) {

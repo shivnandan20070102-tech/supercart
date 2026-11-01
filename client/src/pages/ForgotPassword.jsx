@@ -21,7 +21,7 @@ const ForgotPassword = () => {
     setLoading(true);
     try {
       const redirectTo = `${window.location.origin}${resetPath}`;
-      const response = await forgotPasswordApi(email.trim(), redirectTo);
+      const response = await forgotPasswordApi(email.trim(), redirectTo, isStore ? 'store_manager' : 'customer');
       setMessage(response?.message || 'If this email is registered, you will receive a reset link.');
     } catch (err) {
       setError(err?.message || 'Could not send reset link. Please try again.');
