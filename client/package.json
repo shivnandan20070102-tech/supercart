@@ -7,9 +7,15 @@
     "dev": "vite --host --port 5173",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:add": "cap add android",
+    "android:user": "set VITE_APP_PANEL=user&& set CAP_APP_ID=com.supercart.user&& set CAP_APP_NAME=SuperCart User&& npm run build&& cap sync android",
+    "android:store": "set VITE_APP_PANEL=store&& set CAP_APP_ID=com.supercart.store&& set CAP_APP_NAME=SuperCart Store&& npm run build&& cap sync android",
+    "android:delivery": "set VITE_APP_PANEL=delivery&& set CAP_APP_ID=com.supercart.delivery&& set CAP_APP_NAME=SuperCart Delivery&& npm run build&& cap sync android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
     "@supabase/supabase-js": "^2.112.4",
     "@tailwindcss/vite": "^4.3.3",
     "html5-qrcode": "^2.3.8",
@@ -22,6 +28,7 @@
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",

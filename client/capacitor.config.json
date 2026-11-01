@@ -1,0 +1,9 @@
+{
+  "appId": "com.supercart.user",
+  "appName": "SuperCart User",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
