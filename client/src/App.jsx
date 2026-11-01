@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import QuickCommerceHeader from './components/layout/QuickCommerceHeader';
 import Footer from './components/layout/Footer';
 import FloatingCart from './components/layout/FloatingCart';
@@ -9,12 +9,15 @@ import { AuthProvider } from './context/AuthContext';
 import { WishlistProvider } from './context/WishlistContext';
 import { StoreProvider } from './context/StoreContext';
 
+const mobilePanel = import.meta.env.VITE_APP_PANEL || '';
+
 const Home = lazy(() => import('./pages/Home'));
 const Cart = lazy(() => import('./pages/Cart'));
 const Login = lazy(() => import('./pages/Login'));
 const Profile = lazy(() => import('./pages/Profile'));
 const OrderHistory = lazy(() => import('./pages/OrderHistory'));
 const OrderDetail = lazy(() => import('./pages/OrderDetail'));
+const InvoicePage = lazy(() => import('./pages/InvoicePage'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const TermsAndConditions = lazy(() => import('./pages/TermsAndConditions'));
@@ -65,6 +68,24 @@ function ScrollToTop() {
   return null;
 }
 
+function MobilePanelLauncher() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (pathname !== '/' || !mobilePanel) return;
+    const panelRoutes = {
+      user: '/login',
+      store: '/store/login',
+      delivery: '/delivery/login',
+    };
+    const target = panelRoutes[mobilePanel];
+    if (target) navigate(target, { replace: true });
+  }, [navigate, pathname]);
+
+  return null;
+}
+
 /**
  * ShopLayout — Home/Cart/etc. par SuperCart Header, SIRF /profile par nahi.
  * /profile ka apna simple top bar Profile.jsx ke andar hai.
@@ -93,6 +114,7 @@ function ShopLayout({ searchQuery, setSearchQuery, selectedCategory, setSelected
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/orders" element={<OrderHistory />} />
           <Route path="/profile/orders/:id" element={<OrderDetail />} />
+          <Route path="/invoice/:orderId" element={<InvoicePage />} />
           <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
         </Routes>
@@ -118,6 +140,7 @@ function App() {
           <StoreProvider>
             <Router>
               <ScrollToTop />
+              <MobilePanelLauncher />
           <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-emerald-500 selection:text-white">
             {/* Header Navigation */}
             <Suspense fallback={<RouteLoading />}>

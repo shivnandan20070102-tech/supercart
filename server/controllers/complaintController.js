@@ -23,7 +23,10 @@ export const submitComplaint = async (req, res) => {
     const type = String(req.body?.type || req.body?.complainant_type || 'customer');
     const subject = String(req.body?.subject || '').trim().slice(0, 200);
     const description = String(req.body?.description || '').trim().slice(0, 5000);
-    const photoUrl = String(req.body?.photo_url || req.body?.photoUrl || '').slice(0, 1000);
+    const photoUrls = Array.isArray(req.body?.photo_urls)
+      ? req.body.photo_urls.map((value) => String(value || '').slice(0, 1000)).filter(Boolean).slice(0, 3)
+      : [];
+    const photoUrl = String(req.body?.photo_url || req.body?.photoUrl || photoUrls[0] || '').slice(0, 1000);
     const name = String(
       req.body?.name || req.body?.complainant_name || req.user?.name || req.user?.email || 'Customer'
     ).slice(0, 120);
@@ -47,6 +50,7 @@ export const submitComplaint = async (req, res) => {
         subject,
         description,
         photo_url: photoUrl,
+        photo_urls: photoUrls.length ? photoUrls : (photoUrl ? [photoUrl] : []),
         status: 'pending',
         admin_response: '',
       })

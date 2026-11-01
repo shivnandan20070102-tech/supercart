@@ -88,8 +88,7 @@ export const fetchInvoiceModel = async (orderId) => {
   return { order, model };
 };
 
-// Access: admin = sab, owner = apna, store_manager = apne store ka,
-// delivery partner = assigned order. Guest order (user_id null) sirf admin.
+// Access: admin = sab, owner = apna. Guest order (user_id null) sirf admin.
 const checkInvoiceAccess = async (req, order) => {
   const uid = req.user?.id;
   if (!uid) return false;
@@ -100,20 +99,12 @@ const checkInvoiceAccess = async (req, order) => {
   } catch { /* role unknown */ }
   if (role === 'admin') return true;
   if (order.user_id && String(order.user_id) === String(uid)) return true;
-  if (order.delivery_boy_id && String(order.delivery_boy_id) === String(uid)) return true;
-  if (role === 'store_manager' && order.store_id != null) {
-    try {
-      const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', uid);
-      const ids = (links || []).map((r) => Number(r.store_id));
-      if (ids.includes(Number(order.store_id))) return true;
-    } catch { /* deny */ }
-  }
   return false;
 };
 
 // @desc    Order ka PDF invoice download/stream karo
 // @route   GET /api/orders/:id/invoice (?download=1 par attachment)
-// @access  Private (owner / admin / store_manager / assigned partner)
+// @access  Private (owner / admin)
 export const getOrderInvoice = async (req, res) => {
   try {
     const { id } = req.params;

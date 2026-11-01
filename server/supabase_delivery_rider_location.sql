@@ -50,6 +50,18 @@ END $$;
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Authenticated users read rider locations" ON public.users;
+CREATE POLICY "Customers read active order rider location" ON public.users
+FOR SELECT TO authenticated
+USING (
+  id = auth.uid()
+  OR EXISTS (
+    SELECT 1 FROM public.orders o
+    WHERE o.user_id = auth.uid()
+      AND o.delivery_boy_id = public.users.id
+      AND lower(replace(replace(COALESCE(o.status, ''), '-', '_'), ' ', '_'))
+        IN ('assigned', 'accepted', 'picked_up', 'out_for_delivery')
+  )
+);
 
 -- ===================================================
 -- VERIFY (optional, RUN ke baad alag se chalao):

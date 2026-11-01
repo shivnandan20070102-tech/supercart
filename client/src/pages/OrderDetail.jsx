@@ -21,7 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { getMyOrdersApi } from '../services/api';
 import { supabase } from '../config/supabase';
-import { downloadOrderInvoice, viewOrderInvoice } from '../services/invoice';
+import { downloadOrderInvoice } from '../services/invoice';
 
 // Live map (~2MB) sirf trackable order par lazy load ho — list/detail ki
 // initial load halki rahe.
@@ -170,7 +170,7 @@ const OrderDetail = () => {
     setInvoiceError('');
     setInvoiceBusy('view');
     try {
-      await viewOrderInvoice(id);
+      navigate(`/invoice/${id}`);
     } catch (e) {
       setInvoiceError(e?.message || 'Could not open invoice.');
     } finally {

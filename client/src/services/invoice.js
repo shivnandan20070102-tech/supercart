@@ -1,111 +1,57 @@
-// Invoice download + delivered-email trigger (backend pdfkit PDF).
-// Backend routes: GET /api/orders/:id/invoice (PDF),
-// POST /api/orders/:id/send-invoice-email (delivered email / resend).
-
 import { supabase } from '../config/supabase';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
 const getToken = async () => {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) return session.access_token;
-  } catch { /* ignore */ }
-  try {
-    return localStorage.getItem('supercart_token') || '';
-  } catch {
-    return '';
-  }
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token || localStorage.getItem('supercart_token') || '';
 };
 
-const invoiceUrls = (orderId) => {
-  const base = String(API_BASE_URL || '').replace(/\/+$/, '');
-  const root = base.replace(/\/api$/, '');
-  return [...new Set([`${root}/api/orders/${orderId}/invoice`, `${root}/orders/${orderId}/invoice`])];
-};
+const invoiceUrl = (orderId) => `${API_BASE_URL.replace(/\/api$/, '')}/api/orders/${orderId}/invoice`;
 
-// Shared: invoice PDF blob lao (View + Download dono ke liye same backend).
-const fetchInvoicePdfBlob = async (orderId) => {
+export const fetchInvoicePdfBlob = async (orderId) => {
   const token = await getToken();
-  let lastError = null;
-  for (const url of invoiceUrls(orderId)) {
-    try {
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        let msg = `Server error (${res.status})`;
-        try {
-          const j = await res.json();
-          if (j?.message) msg = j.message;
-        } catch { /* PDF error nahi, text error */ }
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      if (!blob || blob.size === 0) throw new Error('Empty invoice PDF');
-      return new Blob([blob], { type: 'application/pdf' });
-    } catch (e) {
-      lastError = e;
-      // Network fail ho to dusri URL try karo, HTTP error ho to turant throw.
-      const isNetwork = e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(e?.message || '');
-      if (!isNetwork) throw e;
-    }
+  const response = await fetch(invoiceUrl(orderId), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) {
+    const json = await response.json().catch(() => null);
+    throw new Error(json?.message || `Server error (${response.status})`);
   }
-  throw lastError || new Error('Could not load invoice. Check backend.');
+  const blob = await response.blob();
+  if (!blob.size) throw new Error('Empty invoice PDF');
+  return new Blob([blob], { type: 'application/pdf' });
 };
 
-// User/Admin: "Download Invoice" button — PDF file save hoti hai.
-// Returns { ok:true } ya throw Error.
+export const invoiceBlobToDataUrl = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(new Error('Could not render invoice PDF.'));
+  reader.readAsDataURL(blob);
+});
+
 export const downloadOrderInvoice = async (orderId) => {
   const pdfBlob = await fetchInvoicePdfBlob(orderId);
-  const objUrl = URL.createObjectURL(pdfBlob);
-  const a = document.createElement('a');
-  a.href = objUrl;
-  a.download = `SuperCart-Order-${orderId}.pdf`;
-  a.target = '_blank';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(objUrl), 10_000);
+  const objectUrl = URL.createObjectURL(pdfBlob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = `SuperCart-Order-${orderId}.pdf`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
   return { ok: true };
 };
 
-// User: "View Invoice" button — naya tab me PDF kholo (download nahi, sirf dekho).
-// Popup-blocker se bachne ke liye tab pehle kholo, phir PDF load karke usme dikhao.
-// Returns { ok:true } ya throw Error.
-export const viewOrderInvoice = async (orderId) => {
-  const viewerTab = window.open('', '_blank');
-  if (!viewerTab) throw new Error('Popup blocked. Please allow popups to view invoice.');
-  try {
-    viewerTab.document.write('<p style="font-family:sans-serif;padding:24px">Loading invoice…</p>');
-  } catch { /* cross-origin blank tab, ignore */ }
-  const pdfBlob = await fetchInvoicePdfBlob(orderId);
-  const objUrl = URL.createObjectURL(pdfBlob);
-  viewerTab.location.href = objUrl;
-  setTimeout(() => URL.revokeObjectURL(objUrl), 60_000);
-  return { ok: true };
-};
-
-// Delivered hote hi backend ko invoice-email bhejne ko bolo.
-// Fire-and-forget: email fail ho to order status NAHI rukta.
 export const triggerDeliveredInvoiceEmail = async (orderId) => {
   try {
     const token = await getToken();
-    const base = String(API_BASE_URL || '').replace(/\/+$/, '').replace(/\/api$/, '');
-    const urls = [`${base}/api/orders/${orderId}/send-invoice-email`, `${base}/orders/${orderId}/send-invoice-email`];
-    for (const url of urls) {
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        });
-        if (res.ok) return await res.json().catch(() => ({ success: true }));
-      } catch { /* next URL */ }
-    }
-    return { success: false };
+    const response = await fetch(`${API_BASE_URL.replace(/\/api$/, '')}/api/orders/${orderId}/send-invoice-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    return response.ok ? response.json().catch(() => ({ success: true })) : { success: false };
   } catch {
     return { success: false };
   }
 };
 
-export default { downloadOrderInvoice, viewOrderInvoice, triggerDeliveredInvoiceEmail };
+export default { downloadOrderInvoice, fetchInvoicePdfBlob, invoiceBlobToDataUrl, triggerDeliveredInvoiceEmail };

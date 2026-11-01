@@ -706,6 +706,27 @@ const DeliveryDashboard = () => {
     };
   }, [user, locationAllowed]);
 
+  useEffect(() => {
+    const active = (orders || []).some((order) => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(String(order.status || '').toLowerCase()));
+    if (!active || !navigator.wakeLock?.request) return undefined;
+    let lock = null;
+    let cancelled = false;
+    const requestLock = async () => {
+      try {
+        lock = await navigator.wakeLock.request('screen');
+        console.info('[DeliveryDashboard] screen wake lock acquired');
+        lock.addEventListener('release', () => { if (!cancelled) requestLock(); });
+      } catch (error) {
+        console.warn('[DeliveryDashboard] screen wake lock unavailable:', error);
+      }
+    };
+    requestLock();
+    return () => {
+      cancelled = true;
+      lock?.release?.().catch?.(() => {});
+    };
+  }, [orders]);
+
   // Safety: popup wala order bahar se hat/badal jaye to popup band karo + siren stop.
   useEffect(() => {
     if (!popupOrderId || updatingId || loading) return;

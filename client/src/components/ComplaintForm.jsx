@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { ImagePlus, LoaderCircle, Send } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Send, X } from 'lucide-react';
 import { supabase } from '../config/supabase';
-import { fetchMyComplaints, submitComplaint } from '../services/complaints';
+import { fetchMyComplaints, resolveComplaintPhotoUrls, submitComplaint, validateComplaint } from '../services/complaints';
 
 const statusBadge = (status) => {
   const s = String(status || 'pending');
@@ -26,8 +26,10 @@ const formatDate = (v) => {
 const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState('');
+  const [files, setFiles] = useState([]);
+  const [previews, setPreviews] = useState([]);
+  const [signedPhotos, setSignedPhotos] = useState({});
+  const [lightbox, setLightbox] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [mine, setMine] = useState([]);
@@ -71,17 +73,26 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const entries = await Promise.all(mine.map(async (complaint) => [complaint.id, await resolveComplaintPhotoUrls(supabase, complaint)]));
+      if (active) setSignedPhotos(Object.fromEntries(entries));
+    })();
+    return () => { active = false; };
+  }, [mine]);
+
   const onSubmit = async (event) => {
     event.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     setMessage({ type: '', text: '' });
     try {
-      await submitComplaint(supabase, { userId, type: complainantType, name: userName, subject, description, file });
+      await submitComplaint(supabase, { userId, type: complainantType, name: userName, subject, description, files });
       setSubject('');
       setDescription('');
-      setFile(null);
-      setPreview('');
+      setFiles([]);
+      setPreviews([]);
       await loadMine();
       setMessage({ type: 'success', text: 'Complaint submitted. Admin will review it soon.' });
     } catch (e) {
@@ -124,19 +135,33 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
             <span className={label}>Photo (optional)</span>
             <label className={`flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3.5 py-3 text-xs font-bold transition ${dark ? 'border-slate-600 text-slate-300 hover:border-emerald-500' : 'border-slate-300 text-slate-600 hover:border-emerald-500'}`}>
               <ImagePlus className="h-4 w-4 shrink-0 text-emerald-500" />
-              {file ? file.name : 'Choose photo (max 5 MB)'}
+              {files.length ? `${files.length}/3 photo${files.length > 1 ? 's' : ''} selected` : 'Add photos (JPG, PNG, WebP; max 3 MB each)'}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  const f = e.target.files?.[0] || null;
-                  setFile(f);
-                  setPreview(f ? URL.createObjectURL(f) : '');
+                  const next = [...files, ...Array.from(e.target.files || [])].slice(0, 3);
+                  const error = validateComplaint({ subject: 'ok', description: 'ok', files: next });
+                  if (error) {
+                    setMessage({ type: 'error', text: error });
+                    return;
+                  }
+                  setFiles(next);
+                  setPreviews(next.map((file) => URL.createObjectURL(file)));
                 }}
               />
             </label>
-            {preview && <img src={preview} alt="Preview" className="mt-2 h-24 w-24 rounded-xl object-cover" />}
+            {files.length > 0 && <p className={`mt-2 text-xs font-bold ${muted}`}>{files.length}/3</p>}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {previews.map((previewUrl, index) => (
+                <div key={previewUrl} className="relative">
+                  <img src={previewUrl} alt={`Selected complaint photo ${index + 1}`} className="h-20 w-20 rounded-xl object-cover" />
+                  <button type="button" onClick={() => { setFiles(files.filter((_, i) => i !== index)); setPreviews(previews.filter((_, i) => i !== index)); }} className="absolute -right-1.5 -top-1.5 rounded-full bg-rose-600 p-1 text-white" aria-label="Remove photo"><X className="h-3 w-3" /></button>
+                </div>
+              ))}
+            </div>
           </div>
           {message.text && (
             <p role={message.type === 'error' ? 'alert' : 'status'} className={`rounded-xl p-3 text-xs font-bold ${message.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>
@@ -173,11 +198,11 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
                 </div>
                 <p className={`mt-0.5 text-[11px] ${muted}`}>{formatDate(c.created_at)}</p>
                 <p className={`mt-1.5 text-xs leading-relaxed ${dark ? 'text-slate-300' : 'text-slate-600'}`}>{c.description}</p>
-                {c.photo_url && (
-                  <a href={c.photo_url} target="_blank" rel="noreferrer">
-                    <img src={c.photo_url} alt="Complaint evidence" loading="lazy" className="mt-2 h-20 w-20 rounded-xl object-cover" />
-                  </a>
-                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(signedPhotos[c.id] || []).map((url, index) => url ? (
+                    <button type="button" key={url} onClick={() => setLightbox(url)}><img src={url} alt={`Complaint evidence ${index + 1}`} loading="lazy" className="h-20 w-20 rounded-xl object-cover" /></button>
+                  ) : <span key={index} className={`flex h-20 w-20 items-center justify-center rounded-xl text-center text-[10px] ${muted}`}>Photo unavailable</span>)}
+                </div>
                 {c.admin_response && (
                   <div className={`mt-2 rounded-xl p-2.5 text-xs ${dark ? 'bg-emerald-950/60 text-emerald-200' : 'bg-emerald-50 text-emerald-800'}`}>
                     <p className="font-black">Admin reply:</p>
@@ -189,6 +214,7 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
           </ul>
         )}
       </div>
+      {lightbox && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setLightbox(null); }}><button type="button" onClick={() => setLightbox(null)} className="absolute right-4 top-4 rounded-full bg-white p-2 text-slate-900" aria-label="Close preview"><X className="h-5 w-5" /></button><img src={lightbox} alt="Complaint evidence preview" className="max-h-[90vh] max-w-full rounded-xl object-contain" /></div>}
     </div>
   );
 };

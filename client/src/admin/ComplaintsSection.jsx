@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquareWarning, X } from 'lucide-react';
 import { supabase } from '../config/supabase';
+import { resolveComplaintPhotoUrls } from '../services/complaints';
 
 const TABS = [
   { id: 'customer', label: 'Customer Complaints' },
@@ -36,6 +37,8 @@ const ComplaintsSection = ({ searchQuery = '' }) => {
   const [statusDraft, setStatusDraft] = useState('pending');
   const [replyDraft, setReplyDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [signedPhotos, setSignedPhotos] = useState([]);
+  const [lightbox, setLightbox] = useState(null);
 
   const loadAll = useCallback(async () => {
     const { data, error } = await supabase
@@ -98,6 +101,7 @@ const ComplaintsSection = ({ searchQuery = '' }) => {
     setDetail(row);
     setStatusDraft(row.status || 'pending');
     setReplyDraft(row.admin_response || '');
+    resolveComplaintPhotoUrls(supabase, row).then(setSignedPhotos).catch(() => setSignedPhotos([]));
   };
 
   const saveDetail = async () => {
@@ -170,6 +174,7 @@ const ComplaintsSection = ({ searchQuery = '' }) => {
             ))}
           </ul>
         )}
+        {lightbox && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setLightbox(null); }}><button type="button" onClick={() => setLightbox(null)} className="absolute right-4 top-4 rounded-full bg-white p-2 text-slate-900" aria-label="Close preview"><X className="h-5 w-5" /></button><img src={lightbox} alt="Complaint evidence preview" className="max-h-[90vh] max-w-full rounded-xl object-contain" /></div>}
       </section>
 
       {detail && (
@@ -193,11 +198,11 @@ const ComplaintsSection = ({ searchQuery = '' }) => {
               </div>
             </div>
             <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-200">{detail.description}</p>
-            {detail.photo_url && (
-              <a href={detail.photo_url} target="_blank" rel="noreferrer" className="mt-3 block">
-                <img src={detail.photo_url} alt="Complaint evidence (click to enlarge)" loading="lazy" className="max-h-96 w-full rounded-2xl border border-slate-700 object-contain" />
-              </a>
-            )}
+            <div className="mt-3 flex flex-wrap gap-3">
+              {signedPhotos.map((url, index) => url ? (
+                <button type="button" key={url} onClick={() => setLightbox(url)}><img src={url} alt={`Complaint evidence ${index + 1}`} loading="lazy" className="h-28 w-28 rounded-xl border border-slate-700 object-cover" /></button>
+              ) : <span key={index} className="flex h-28 w-28 items-center justify-center rounded-xl border border-slate-700 text-center text-xs text-slate-500">Photo unavailable</span>)}
+            </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="text-xs font-bold text-slate-400">
                 Status Update

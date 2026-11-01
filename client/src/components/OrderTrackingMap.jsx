@@ -52,9 +52,16 @@ const OrderTrackingMap = ({ riderId, dropLat, dropLng, dropLabel }) => {
   const riderMarkerRef = useRef(null);
   const fittedRef = useRef(false);
   const [riderPos, setRiderPos] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [now, setNow] = useState(Date.now());
   const [tokenMissing] = useState(() => !MAPBOX_TOKEN);
 
   const drop = validLngLat(dropLat, dropLng);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Rider location: pehle ek fetch, phir Realtime + 15s poll fallback.
   // Realtime miss ho (RLS/publication/network) to poll se ~15s me dot aa jayega.
@@ -66,12 +73,16 @@ const OrderTrackingMap = ({ riderId, dropLat, dropLng, dropLabel }) => {
       try {
         const { data } = await supabase
           .from('users')
-          .select('current_lat, current_lng')
+          .select('current_lat, current_lng, location_updated_at')
           .eq('id', riderId)
           .maybeSingle();
         if (cancelled) return;
         const pos = validLngLat(data?.current_lat, data?.current_lng);
-        if (pos) setRiderPos(pos);
+        if (pos) {
+          setRiderPos(pos);
+          setLastUpdated(data?.location_updated_at ? new Date(data.location_updated_at) : null);
+          console.info('[OrderTrackingMap] rider location received', riderId, data?.location_updated_at);
+        }
       } catch { /* best-effort — agla poll retry karega */ }
     };
 
@@ -85,7 +96,11 @@ const OrderTrackingMap = ({ riderId, dropLat, dropLng, dropLabel }) => {
         { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${riderId}` },
         (payload) => {
           const pos = validLngLat(payload.new?.current_lat, payload.new?.current_lng);
-          if (pos) setRiderPos(pos);
+          if (pos) {
+            setRiderPos(pos);
+            setLastUpdated(payload.new?.location_updated_at ? new Date(payload.new.location_updated_at) : null);
+            console.info('[OrderTrackingMap] realtime rider location received', riderId);
+          }
         },
       )
       .subscribe();
@@ -187,6 +202,11 @@ const OrderTrackingMap = ({ riderId, dropLat, dropLng, dropLabel }) => {
         <span className="flex items-center gap-1.5 text-[11px] font-black text-slate-700">
           <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
           Delivery partner
+        </span>
+        <span className="text-[10px] font-bold text-slate-500">
+          {lastUpdated && now - lastUpdated.getTime() < 60000
+            ? `Last updated ${Math.max(0, Math.floor((now - lastUpdated.getTime()) / 1000))} sec ago`
+            : 'Location update ho rahi hai…'}
         </span>
         <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
           <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
