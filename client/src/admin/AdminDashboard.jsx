@@ -126,7 +126,7 @@ const AdminDashboard = () => {
   };
   const loadPosters = async () => {
     const { data, error } = await supabase
-      .from('homepage_banners')
+      .from('banners')
       .select('*')
       .order('display_order', { ascending: true })
       .order('created_at', { ascending: true });
@@ -149,7 +149,14 @@ const AdminDashboard = () => {
       if (upload.error) throw upload.error;
       const imageUrl = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
       const nextOrder = posters.length > 0 ? Math.max(...posters.map((poster) => Number(poster.display_order) || 0)) + 1 : 0;
-      const result = await supabase.from('homepage_banners').insert({ image_url: imageUrl, display_order: nextOrder, is_active: true });
+      const result = await supabase.from('banners').insert({
+        banner_key: `poster-${crypto.randomUUID()}`,
+        title: 'SuperCart promotion',
+        subtitle: '',
+        image_url: imageUrl,
+        display_order: nextOrder,
+        is_active: true,
+      });
       if (result.error) throw result.error;
       setPosterFile(null);
       event.target.reset();
@@ -163,7 +170,7 @@ const AdminDashboard = () => {
   };
   const deletePoster = async (poster) => {
     if (!window.confirm('Delete this poster?')) return;
-    const { error } = await supabase.from('homepage_banners').delete().eq('id', poster.id);
+    const { error } = await supabase.from('banners').delete().eq('id', poster.id);
     if (error) notify('error', error.message);
     else { notify('success', 'Poster deleted.'); await loadPosters(); }
   };
@@ -172,10 +179,24 @@ const AdminDashboard = () => {
     const targetIndex = index + direction;
     if (index < 0 || targetIndex < 0 || targetIndex >= posters.length) return;
     const target = posters[targetIndex];
-    const first = await supabase.from('homepage_banners').update({ display_order: target.display_order }).eq('id', poster.id);
-    const second = await supabase.from('homepage_banners').update({ display_order: poster.display_order }).eq('id', target.id);
+    const first = await supabase.from('banners').update({ display_order: target.display_order }).eq('id', poster.id);
+    const second = await supabase.from('banners').update({ display_order: poster.display_order }).eq('id', target.id);
     if (first.error || second.error) notify('error', first.error?.message || second.error?.message);
     else await loadPosters();
+  };
+  const editPoster = async (poster) => {
+    const title = window.prompt('Banner title:', poster.title || '');
+    if (title == null) return;
+    const subtitle = window.prompt('Banner subtitle:', poster.subtitle || '');
+    if (subtitle == null) return;
+    const { error } = await supabase.from('banners').update({ title: title.trim(), subtitle: subtitle.trim() }).eq('id', poster.id);
+    if (error) notify('error', error.message);
+    else { await loadPosters(); notify('success', 'Banner updated.'); }
+  };
+  const togglePoster = async (poster) => {
+    const { error } = await supabase.from('banners').update({ is_active: !poster.is_active }).eq('id', poster.id);
+    if (error) notify('error', error.message);
+    else { await loadPosters(); notify('success', `Banner ${poster.is_active ? 'deactivated' : 'activated'}.`); }
   };
   const addCategory = async (event) => {
     event.preventDefault();
@@ -264,7 +285,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (checking) return undefined;
-    const channel = supabase.channel('admin-data-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadProducts).on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, loadCategories).on('postgres_changes', { event: '*', schema: 'public', table: 'homepage_banners' }, loadPosters).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadOrders).on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, loadUsers).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_profiles' }, loadDeliveryProfiles).on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, loadCoupons).subscribe();
+    const channel = supabase.channel('admin-data-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadProducts).on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, loadCategories).on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, loadPosters).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadOrders).on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, loadUsers).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_profiles' }, loadDeliveryProfiles).on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, loadCoupons).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [checking]);
 
@@ -608,7 +629,9 @@ const AdminDashboard = () => {
           {posters.length === 0 ? <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">No posters uploaded yet.</p> : posters.map((poster, posterIndex) => (
             <div key={poster.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950 p-3">
               <img src={poster.image_url} alt="" className="h-16 w-28 rounded-lg object-cover" />
-              <span className="flex-1 text-xs font-bold text-slate-400">Slide {posterIndex + 1}</span>
+              <span className="flex-1 text-xs font-bold text-slate-400"><span className="block text-white">{poster.title || 'Untitled banner'}</span><span className={poster.is_active ? 'text-emerald-400' : 'text-slate-600'}>{poster.is_active ? 'Active' : 'Inactive'} · Slide {posterIndex + 1}</span></span>
+              <button type="button" onClick={() => editPoster(poster)} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold" aria-label="Edit banner">Edit</button>
+              <button type="button" onClick={() => togglePoster(poster)} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold" aria-label="Toggle banner">{poster.is_active ? 'Hide' : 'Show'}</button>
               <button type="button" onClick={() => movePoster(poster, -1)} disabled={posterIndex === 0} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold disabled:opacity-30" aria-label="Move poster up">↑</button>
               <button type="button" onClick={() => movePoster(poster, 1)} disabled={posterIndex === posters.length - 1} className="rounded-lg bg-slate-800 px-2.5 py-2 text-xs font-bold disabled:opacity-30" aria-label="Move poster down">↓</button>
               <button type="button" onClick={() => deletePoster(poster)} className="rounded-lg bg-rose-950 px-2.5 py-2 text-rose-300" aria-label="Delete poster"><Trash2 className="h-4 w-4" /></button>

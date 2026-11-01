@@ -253,6 +253,19 @@ CREATE TABLE IF NOT EXISTS public.homepage_banners (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS public.banners (
+    id BIGSERIAL PRIMARY KEY,
+    banner_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL DEFAULT '',
+    subtitle TEXT NOT NULL DEFAULT '',
+    image_url TEXT,
+    background_color TEXT NOT NULL DEFAULT '#059669',
+    coupon_code TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- 4. Enable Row Level Security (RLS) & Public Policies
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
@@ -260,6 +273,7 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.homepage_banners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.banners ENABLE ROW LEVEL SECURITY;
 
 -- Allow public read access to products
 DROP POLICY IF EXISTS "Allow public read on products" ON public.products;
@@ -317,6 +331,15 @@ CREATE POLICY "Allow public read on homepage banners" ON public.homepage_banners
 
 DROP POLICY IF EXISTS "Admins can manage homepage banners" ON public.homepage_banners;
 CREATE POLICY "Admins can manage homepage banners" ON public.homepage_banners
+    FOR ALL TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Allow public read on banners" ON public.banners;
+CREATE POLICY "Allow public read on banners" ON public.banners FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Admins can manage banners" ON public.banners;
+CREATE POLICY "Admins can manage banners" ON public.banners
     FOR ALL TO authenticated
     USING (public.is_admin())
     WITH CHECK (public.is_admin());

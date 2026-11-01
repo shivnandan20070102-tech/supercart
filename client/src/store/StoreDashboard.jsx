@@ -637,7 +637,14 @@ const StoreDashboard = () => {
       const result = productModal?.mode === 'edit'
         ? await supabase.from('products').update(payload).eq('id', productModal.product.id)
         : await supabase.from('products').insert(payload);
-      if (result.error) throw result.error;
+      if (result.error) {
+        console.error('[StorePanel] Product save failed:', {
+          operation: productModal?.mode === 'edit' ? 'update' : 'insert',
+          payload,
+          error: result.error,
+        });
+        throw result.error;
+      }
       setProductModal(null);
       setProductForm(emptyManagedProduct);
       setProductImageFile(null);

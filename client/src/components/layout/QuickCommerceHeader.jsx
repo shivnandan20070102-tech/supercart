@@ -18,9 +18,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useStore } from '../../context/StoreContext';
+import { supabase } from '../../config/supabase';
 import useDeliveryAddress from '../../hooks/useDeliveryAddress';
 import AddressPicker from '../grocery/AddressPicker';
-import { CATEGORIES } from '../../data/mockGroceryData';
+import { fetchCategories } from '../../services/categories';
 import {
   DELIVERY_ETA_MINUTES,
   SEARCH_SUGGESTIONS,
@@ -63,6 +64,7 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const [categoryIndicator, setCategoryIndicator] = useState({ left: 0, width: 0 });
+  const [categories, setCategories] = useState([{ id: 'all', name: 'All Categories', icon: 'Sparkles' }]);
   const recognitionRef = useRef(null);
   const micStreamRef = useRef(null);
   const voiceErrorTimerRef = useRef(null);
@@ -72,6 +74,27 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === '/';
+
+  useEffect(() => {
+    let mounted = true;
+    const loadCategories = async () => {
+      try {
+        const names = await fetchCategories();
+        if (mounted) setCategories([{ id: 'all', name: 'All Categories', icon: 'Sparkles' }, ...names.map((name) => ({ id: name, name, icon: 'Sparkles' }))]);
+      } catch (error) {
+        console.error('Failed to load categories:', error);
+      }
+    };
+    loadCategories();
+    const channel = supabase
+      .channel('user-categories-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, loadCategories)
+      .subscribe();
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Header hamesha fully visible/static — scroll par koi collapse/expand nahi,
   // taaki scroll ke time koi blink/flicker na ho. (Pehle yahan scroll listener
@@ -431,7 +454,7 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
           {isHome && (
             <nav ref={categoryNavRef} aria-label="Categories" className="qc-no-scrollbar relative -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 pt-1">
               <span aria-hidden="true" className="pointer-events-none absolute bottom-1 h-0.5 rounded-full bg-rose-400 shadow-[0_0_10px_rgb(251_113_133/0.75)] transition-[left,width] duration-300 ease-out" style={{ left: categoryIndicator.left, width: categoryIndicator.width }} />
-              {CATEGORIES.map((cat) => {
+              {categories.map((cat) => {
                 const Icon = CATEGORY_ICONS[cat.icon] || Sparkles;
                 const isActive = selectedCategory === cat.id || selectedCategory === cat.name;
                 return (
