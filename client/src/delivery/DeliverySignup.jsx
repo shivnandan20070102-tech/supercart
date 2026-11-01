@@ -44,7 +44,7 @@ const DeliverySignup = () => {
     }
 
     if (!data.session) {
-      setMessage('Account created. Please verify your email, then login as a delivery partner.');
+      setMessage('Account created. Please verify your email, then login. Your Home Area and document setup will open there.');
       setLoading(false);
       return;
     }
@@ -58,6 +58,7 @@ const DeliverySignup = () => {
       profile_completed: false,
     }, { onConflict: 'user_id' });
     if (profileError) {
+      console.error('[DeliverySignup] Profile creation failed:', profileError);
       setError(profileError.message);
       setLoading(false);
       return;
