@@ -5,7 +5,7 @@ import { supabase } from '../config/supabase';
 import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
 import { getDeliverySirenState, playDeliveryAlertSound, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
-import { triggerDeliveredInvoiceEmail } from '../services/invoice';
+import { DeliveryBottomNav } from './DeliveryPocket';
 
 // Map library भारी hai (~2MB) — sirf Delivery page par lazy load ho
 const DeliveryMap = React.lazy(() => import('./DeliveryMap'));
@@ -293,6 +293,7 @@ const DeliveryDashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [todayEarnings, setTodayEarnings] = useState(0);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
   const [error, setError] = useState('');
@@ -358,7 +359,8 @@ const DeliveryDashboard = () => {
       return;
     }
 
-    const customerIds = [...new Set((data || []).map((order) => order.user_id).filter(Boolean))];
+    const activeStatuses = new Set(['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery']);
+    const customerIds = [...new Set((data || []).filter((order) => activeStatuses.has(String(order.status || '').toLowerCase())).map((order) => order.user_id).filter(Boolean))];
     let customers = [];
     if (customerIds.length > 0) {
       const { data: customerRows, error: customersError } = await supabase
@@ -377,6 +379,14 @@ const DeliveryDashboard = () => {
       ...order,
       customer: customerById.get(order.user_id) || null,
     })));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data: earnings } = await supabase
+      .from('delivery_earnings')
+      .select('fee,tip')
+      .eq('partner_id', deliveryPartnerId)
+      .gte('created_at', today.toISOString());
+    setTodayEarnings((earnings || []).reduce((sum, row) => sum + Number(row.fee || 0) + Number(row.tip || 0), 0));
     setLoading(false);
   }, []);
 
@@ -650,7 +660,7 @@ const DeliveryDashboard = () => {
   useEffect(() => {
     try {
       const activeCount = (orders || []).filter((o) =>
-        ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(String(o.status || '').toLowerCase()),
+        ['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery'].includes(String(o.status || '').toLowerCase()),
       ).length;
       // eslint-disable-next-line no-console
       console.info('[DeliveryDashboard] location scope: allowed =', locationAllowed, '| isOnline =', isOnline, '| activeOrders =', activeCount, '| homeStoreId =', homeStoreId, '| assignedStores =', assignedStoreIds);
@@ -707,7 +717,7 @@ const DeliveryDashboard = () => {
   }, [user, locationAllowed]);
 
   useEffect(() => {
-    const active = (orders || []).some((order) => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(String(order.status || '').toLowerCase()));
+    const active = (orders || []).some((order) => ['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery'].includes(String(order.status || '').toLowerCase()));
     if (!active || !navigator.wakeLock?.request) return undefined;
     let lock = null;
     let cancelled = false;
@@ -816,23 +826,21 @@ const DeliveryDashboard = () => {
   };
 
   // Auto-assign flow: order DB trigger se pehle se assigned hai.
-  // Steps: assigned -> accepted (popup) -> picked_up -> out_for_delivery -> delivered
+  // Steps: assigned -> accepted (popup) -> reached_store -> picked_up -> reached_customer -> delivered
   const updateOrderStatus = async (orderId, status) => {
     setUpdatingId(orderId);
     setError('');
 
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({ status })
-      .eq('id', orderId)
-      .eq('delivery_boy_id', user.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(`/api/orders/${orderId}/delivery-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ status }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) setError(result?.message || 'Status update failed.');
+    else {
       await loadOrders(user.id);
-      // Delivered hote hi customer ko invoice PDF email (backend, fire-and-forget).
-      if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(orderId);
     }
     setUpdatingId(null);
   };
@@ -1043,9 +1051,7 @@ const DeliveryDashboard = () => {
           {(
             <div className="flex flex-wrap gap-2">
               <button onClick={() => navigate(`/delivery/order/${order.id}`)} className="flex items-center gap-1 rounded-xl border border-slate-700 px-4 py-2 text-xs font-black text-slate-200 transition hover:border-emerald-500 hover:text-white">Details</button>
-              {canPick && <button disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'picked_up')} className="flex items-center gap-1 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"><Package className="h-4 w-4" /> {updatingId === order.id ? t.starting : t.pickedUp}</button>}
-              {canShip && <button disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'out_for_delivery')} className="flex items-center gap-1 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"><Truck className="h-4 w-4" /> {updatingId === order.id ? t.starting : t.outForDelivery}</button>}
-              {canComplete && <button disabled={updatingId === order.id} onClick={() => updateOrderStatus(order.id, 'delivered')} className="flex items-center gap-1 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"><Check className="h-4 w-4" /> {t.markDelivered}</button>}
+              {(canPick || canShip || canComplete) && <span className="text-[11px] font-bold text-slate-500">Open Details for the next delivery step</span>}
               {isDelivered && <span className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-emerald-300">{t.completed}</span>}
             </div>
           )}
@@ -1129,6 +1135,11 @@ const DeliveryDashboard = () => {
       </div>
       {/* Fixed bar ke neeche ka spacer (yahan se map dikhega) */}
       <div aria-hidden className="h-16" />
+      <div className="relative z-10 mx-auto max-w-5xl px-3 pt-3 sm:px-8">
+        <div className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-slate-950/90 px-4 py-3 text-sm font-black text-emerald-300 shadow-lg">
+          <Wallet className="h-4 w-4" /> Today&apos;s earnings: ₹{todayEarnings.toFixed(2)}
+        </div>
+      </div>
 
       <div className="relative z-10 p-3 pb-28 sm:p-8 sm:pb-32">
       <div className="mx-auto max-w-5xl">
@@ -1275,6 +1286,7 @@ const DeliveryDashboard = () => {
           onTimeout={() => timeoutPopupOrder(popupOrder)}
         />
       )}
+      <DeliveryBottomNav active="home" />
     </div>
   );
 };

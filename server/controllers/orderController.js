@@ -2,11 +2,15 @@ import { supabase } from '../config/supabase.js';
 import { getShippingCoords, resolveOrderStore, calculateDeliveryCharge, calculateDeliveryFee } from '../utils/storeAssign.js';
 import { releaseStockReservation, reserveStockForOrder } from '../utils/stock.js';
 import { barcodesMatch, itemProductId } from '../utils/barcodeMatch.js';
+import crypto from 'node:crypto';
 
 const isValidUUID = (val) => {
   if (!val || typeof val !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 };
+
+const normalizeDeliveryStatus = (value) => String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+const DELIVERY_STATUS_FLOW = ['accepted', 'reached_store', 'picked_up', 'reached_customer', 'delivered'];
 
 // Ensure public.users row exists so orders FK never fails for real users
 const ensureUserRow = async (userId, extra = {}) => {
@@ -421,6 +425,8 @@ export const createOrder = async (req, res) => {
       delivery_instructions: finalInstructions,
       tip_amount: finalTipAmount,
       total_price: finalTotalPrice,
+      delivery_otp: String(crypto.randomInt(0, 10000)).padStart(4, '0'),
+      delivery_otp_attempts: 0,
       delivery_distance_km: serverDistanceKm ?? 0,
       // Koi partner available na ho to yehi status rehta hai —
       // 30s worker / Realtime listener baad me auto-assign karega.
@@ -437,7 +443,7 @@ export const createOrder = async (req, res) => {
     // Back-compat: migration file abhi tak run nahi hui ho to missing
     // columns hatakar retry karo taaki order kabhi fail na ho
     let insertPayload = payload;
-    if (error && /coupon_code|delivery_instructions|tip_amount|store_id|delivery_distance_km/i.test(error.message || '')) {
+    if (error && /coupon_code|delivery_instructions|tip_amount|store_id|delivery_distance_km|delivery_otp/i.test(error.message || '')) {
       const msg = error.message || '';
       console.warn('⚠️ orders table me column missing, retrying without it (run supabase_orders_*.sql migrations)');
       insertPayload = { ...payload };
@@ -446,6 +452,10 @@ export const createOrder = async (req, res) => {
       if (/tip_amount/i.test(msg)) delete insertPayload.tip_amount;
       if (/store_id/i.test(msg)) delete insertPayload.store_id;
       if (/delivery_distance_km/i.test(msg)) delete insertPayload.delivery_distance_km;
+      if (/delivery_otp/i.test(msg)) {
+        delete insertPayload.delivery_otp;
+        delete insertPayload.delivery_otp_attempts;
+      }
       const retry = await supabase.from('orders').insert(insertPayload).select().single();
       data = retry.data;
       error = retry.error;
@@ -502,6 +512,86 @@ export const createOrder = async (req, res) => {
       message: 'Server error while creating order',
       error: error.message,
     });
+  }
+};
+
+// Delivery-only status transition. The service-role server validates ownership,
+// forward-only order, OTP attempts, and records the earning atomically enough
+// for the existing Supabase schema.
+export const deliverOrderWithOtp = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const partnerId = String(req.user?.id || '');
+    const otp = String(req.body?.otp || '').replace(/\D/g, '');
+    const { data: order, error } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
+    if (error || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (String(order.delivery_boy_id || '') !== partnerId) return res.status(403).json({ success: false, message: 'This order is not assigned to you.' });
+
+    const current = normalizeDeliveryStatus(order.status) === 'out_for_delivery'
+      ? 'reached_customer'
+      : normalizeDeliveryStatus(order.status);
+    if (current !== 'reached_customer') return res.status(400).json({ success: false, message: 'Reach the customer before completing delivery.' });
+    if (order.delivery_otp_locked_until && new Date(order.delivery_otp_locked_until) > new Date()) {
+      return res.status(423).json({ success: false, message: 'Delivery OTP is locked after 5 failed attempts.' });
+    }
+    if (!/^\d{4}$/.test(otp)) return res.status(400).json({ success: false, message: 'Enter the customer 4-digit OTP.' });
+
+    const expected = String(order.delivery_otp || '').padStart(4, '0');
+    const matches = expected.length === otp.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(otp));
+    if (!matches) {
+      const attempts = Number(order.delivery_otp_attempts || 0) + 1;
+      await supabase.from('orders').update({
+        delivery_otp_attempts: attempts,
+        ...(attempts >= 5 ? { delivery_otp_locked_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } : {}),
+      }).eq('id', id).eq('delivery_boy_id', partnerId);
+      return res.status(400).json({ success: false, message: attempts >= 5 ? 'Delivery OTP locked after 5 failed attempts.' : `Incorrect OTP. ${5 - attempts} attempts left.` });
+    }
+
+    const { data: updated, error: updateError } = await supabase.from('orders').update({
+      status: 'delivered',
+      delivery_otp_verified_at: new Date().toISOString(),
+    }).eq('id', id).eq('delivery_boy_id', partnerId).eq('status', order.status).select().single();
+    if (updateError || !updated) return res.status(409).json({ success: false, message: 'Order changed. Refresh and try again.' });
+
+    const { error: earningError } = await supabase.from('delivery_earnings').upsert({
+      order_id: order.id,
+      partner_id: partnerId,
+      fee: Number(order.delivery_fee || 0),
+      tip: Number(order.tip_amount || 0),
+    }, { onConflict: 'order_id' });
+    if (earningError) console.error('[delivery] earning record failed:', earningError.message);
+    return res.status(200).json({ success: true, data: updated });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Delivery could not be completed.' });
+  }
+};
+
+export const transitionDeliveryStatus = async (req, res) => {
+  try {
+    const partnerId = String(req.user?.id || '');
+    const requested = normalizeDeliveryStatus(req.body?.status);
+    const { data: order, error } = await supabase.from('orders').select('*').eq('id', req.params.id).maybeSingle();
+    if (error || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (String(order.delivery_boy_id || '') !== partnerId) return res.status(403).json({ success: false, message: 'This order is not assigned to you.' });
+    const current = normalizeDeliveryStatus(order.status) === 'out_for_delivery'
+      ? 'reached_customer'
+      : normalizeDeliveryStatus(order.status);
+    const currentIndex = DELIVERY_STATUS_FLOW.indexOf(current);
+    const nextIndex = DELIVERY_STATUS_FLOW.indexOf(requested);
+    if (nextIndex !== currentIndex + 1 || requested === 'delivered') {
+      return res.status(400).json({ success: false, message: 'Only the next delivery step is allowed.' });
+    }
+    const { data: updated, error: updateError } = await supabase.from('orders')
+      .update({ status: requested })
+      .eq('id', order.id)
+      .eq('delivery_boy_id', partnerId)
+      .eq('status', order.status)
+      .select()
+      .single();
+    if (updateError || !updated) return res.status(409).json({ success: false, message: 'Order changed. Refresh and try again.' });
+    return res.status(200).json({ success: true, data: updated });
+  } catch {
+    return res.status(500).json({ success: false, message: 'Status could not be updated.' });
   }
 };
 

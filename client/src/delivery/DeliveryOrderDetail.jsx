@@ -21,6 +21,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { isOrderInScope } from './storeScope';
 import { triggerDeliveredInvoiceEmail } from '../services/invoice';
+import { DeliveryBottomNav } from './DeliveryPocket';
 
 // Checkout wale delivery-instruction values ka label + icon map
 const INSTRUCTION_META = {
@@ -46,8 +47,9 @@ const normalizeInstructions = (value) => {
 // Accept ke baad ka step flow (sirf agla step enabled rehta hai)
 const FLOW = [
   { key: 'accepted', label: 'Accepted' },
+  { key: 'reached_store', label: 'Reached Store' },
   { key: 'picked_up', label: 'Picked Up' },
-  { key: 'out_for_delivery', label: 'Out for Delivery' },
+  { key: 'reached_customer', label: 'Reached Customer' },
   { key: 'delivered', label: 'Delivered' },
 ];
 
@@ -65,6 +67,9 @@ const DeliveryOrderDetail = () => {
   const [error, setError] = useState('');
   // Rider ka Home Store — Navigate/map sirf assigned/home scope me.
   const [homeStoreId, setHomeStoreId] = useState(null);
+  const [otpOpen, setOtpOpen] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
 
   const loadOrder = useCallback(async (uid) => {
     const { data, error: orderError } = await supabase
@@ -83,14 +88,15 @@ const DeliveryOrderDetail = () => {
       return;
     }
     setOrder(data);
-    if (data.user_id) {
+    const activeStatuses = new Set(['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery']);
+    if (data.user_id && activeStatuses.has(String(data.status || '').toLowerCase())) {
       const { data: customerRow } = await supabase
         .from('users')
         .select('id,name,phone')
         .eq('id', data.user_id)
         .maybeSingle();
       if (customerRow) setCustomer(customerRow);
-    }
+    } else setCustomer(null);
     // Partner guard: sirf apna assigned order khol sakta hai
     if (uid && data.delivery_boy_id && String(data.delivery_boy_id) !== String(uid)) {
       setError('This order is not assigned to you.');
@@ -151,16 +157,35 @@ const DeliveryOrderDetail = () => {
     }
     setUpdating(true);
     setError('');
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({ status })
-      .eq('id', order.id)
-      .eq('delivery_boy_id', user.id);
-    if (updateError) setError(updateError.message);
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(`/api/orders/${order.id}/delivery-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ status }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) setError(result?.message || 'Status update failed.');
+    else await loadOrder(user.id);
+    setUpdating(false);
+  };
+
+  const submitOtp = async (event) => {
+    event.preventDefault();
+    setOtpError('');
+    setUpdating(true);
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(`/api/orders/${order.id}/deliver`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ otp }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) setOtpError(result?.message || 'Could not complete delivery.');
     else {
+      setOtpOpen(false);
+      setOtp('');
       await loadOrder(user.id);
-      // Delivered hote hi customer ko invoice PDF email (backend, fire-and-forget).
-      if (String(status || '').toLowerCase() === 'delivered') triggerDeliveredInvoiceEmail(order.id);
+      triggerDeliveredInvoiceEmail(order.id);
     }
     setUpdating(false);
   };
@@ -188,7 +213,8 @@ const DeliveryOrderDetail = () => {
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressLine)}`;
   const paymentMethod = order?.payment_method || 'Cash On Delivery';
   const isCOD = /cash/i.test(paymentMethod);
-  const statusKey = String(order?.status || '').toLowerCase();
+  const rawStatusKey = String(order?.status || '').toLowerCase();
+  const statusKey = rawStatusKey === 'out_for_delivery' ? 'reached_customer' : rawStatusKey;
   const stepIndex = FLOW.findIndex((s) => s.key === statusKey);
   // SCOPE GUARD: Navigate/map sirf apne assigned + home/assigned-store context me.
   // Kisi doosre rider ka order ya unassigned order khul jaye to Navigate mat do.
@@ -396,9 +422,9 @@ const DeliveryOrderDetail = () => {
               </button>
             )}
             {[
+              { key: 'reached_store', label: 'Reached Store', icon: MapPin },
               { key: 'picked_up', label: 'Picked Up', icon: Package },
-              { key: 'out_for_delivery', label: 'Out for Delivery', icon: Truck },
-              { key: 'delivered', label: 'Delivered', icon: Check },
+              { key: 'reached_customer', label: 'Reached Customer', icon: Truck },
             ].map(({ key, label, icon: Icon }) => {
               const targetIdx = FLOW.findIndex((s) => s.key === key);
               const isNext = stepIndex === targetIdx - 1;
@@ -422,9 +448,26 @@ const DeliveryOrderDetail = () => {
                 </button>
               );
             })}
+            {statusKey === 'reached_customer' && (
+              <button type="button" onClick={() => { setOtpOpen(true); setOtpError(''); }} disabled={updating} className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-sm font-black text-slate-950">
+                <Check className="h-5 w-5" /> Verify OTP & Deliver
+              </button>
+            )}
           </div>
         </section>
       </div>
+      {otpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <form onSubmit={submitOtp} className="w-full max-w-sm rounded-3xl border border-slate-700 bg-slate-900 p-6">
+            <h2 className="text-xl font-black">Customer delivery OTP</h2>
+            <p className="mt-1 text-sm text-slate-400">Ask the customer for the 4-digit OTP.</p>
+            <input autoFocus inputMode="numeric" maxLength={4} pattern="\d{4}" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} className="mt-5 w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-center text-3xl font-black tracking-[0.5em] text-white outline-none focus:border-emerald-500" />
+            {otpError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{otpError}</p>}
+            <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setOtpOpen(false)} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button><button type="submit" disabled={otp.length !== 4 || updating} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-50">{updating ? 'Checking...' : 'Deliver'}</button></div>
+          </form>
+        </div>
+      )}
+      <DeliveryBottomNav active="orders" />
     </main>
   );
 };

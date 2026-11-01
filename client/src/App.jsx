@@ -30,6 +30,7 @@ const DeliveryForgotPassword = lazy(() => import('./delivery/DeliveryForgotPassw
 const DeliveryResetPassword = lazy(() => import('./delivery/DeliveryResetPassword'));
 const DeliveryApprovalStatus = lazy(() => import('./delivery/DeliveryApprovalStatus'));
 const DeliveryDashboard = lazy(() => import('./delivery/DeliveryDashboard'));
+const DeliveryPocket = lazy(() => import('./delivery/DeliveryPocket'));
 const DeliveryHelp = lazy(() => import('./delivery/DeliveryHelp'));
 const DeliveryProfile = lazy(() => import('./delivery/DeliveryProfile'));
 const DeliveryGuard = lazy(() => import('./delivery/DeliveryGuard'));
@@ -159,6 +160,7 @@ function App() {
               <Route path="/delivery/help" element={<DeliveryGuard><DeliveryHelp /></DeliveryGuard>} />
               <Route path="/delivery/complaints" element={<DeliveryGuard><DeliveryComplaints /></DeliveryGuard>} />
               <Route path="/delivery/dashboard" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
+              <Route path="/delivery/pocket" element={<DeliveryGuard><DeliveryPocket /></DeliveryGuard>} />
               <Route path="/delivery" element={<DeliveryGuard><DeliveryDashboard /></DeliveryGuard>} />
               {/* Store Panel — sirf store_manager role (account Admin banata hai) */}
               <Route path="/store/login" element={<StoreLogin />} />

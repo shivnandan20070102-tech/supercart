@@ -7,6 +7,8 @@ import {
   getPendingAssignments,
   markOrderPacked,
   retryPendingAssignments,
+  deliverOrderWithOtp,
+  transitionDeliveryStatus,
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminLooseLimiter, generalLimiter, orderLimiter } from '../middleware/rateLimit.js';
@@ -30,6 +32,8 @@ router.route('/myorders').get(protect, generalLimiter, getMyOrders);
 router.route('/:id/invoice').get(protect, generalLimiter, getOrderInvoice);
 // Delivered par invoice email: backend status update + manual resend/test.
 router.route('/:id/status').put(protect, adminLooseLimiter, updateOrderStatus);
+router.route('/:id/deliver').post(protect, adminLooseLimiter, deliverOrderWithOtp);
+router.route('/:id/delivery-status').post(protect, adminLooseLimiter, transitionDeliveryStatus);
 router.route('/:id/send-invoice-email').post(protect, adminLooseLimiter, sendInvoiceEmailEndpoint);
 // Admin manual override (auto-assign ke bawajood partner change)
 router.route('/:id/assign').put(protect, adminLooseLimiter, assignDeliveryPartner);
