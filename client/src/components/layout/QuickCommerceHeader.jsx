@@ -471,7 +471,20 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
                       isActive ? 'text-white' : 'text-emerald-50/80 hover:text-white'
                     }`}
                   >
-                    <Icon className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
+                    {cat.image_url ? (
+                      <img
+                        src={cat.image_url}
+                        alt=""
+                        className={`h-7 w-7 rounded-full object-cover ring-1 transition ${
+                          isActive ? 'ring-white/80' : 'ring-emerald-100/30'
+                        }`}
+                        onError={(event) => {
+                          event.currentTarget.src = '/favicon.svg';
+                        }}
+                      />
+                    ) : (
+                      <Icon className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
+                    )}
                     <span className={`whitespace-nowrap text-[11px] ${isActive ? 'font-black' : 'font-medium'}`}>
                       {shortName(cat.name)}
                     </span>
