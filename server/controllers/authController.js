@@ -146,6 +146,27 @@ export const signupUser = async (req, res) => {
   }
 };
 
+// Password verification happens in the panel client before this endpoint is
+// called; clients never receive permission to write user_roles directly.
+export const addUserRole = async (req, res) => {
+  const requestedRole = String(req.body?.role || '').trim().toLowerCase();
+  if (!['customer', 'delivery', 'store_manager'].includes(requestedRole)) {
+    return res.status(400).json({ success: false, message: 'Invalid panel role.' });
+  }
+  if (!req.user?.id) {
+    return res.status(401).json({ success: false, message: 'Login required.' });
+  }
+
+  const { error } = await supabase
+    .from('user_roles')
+    .upsert({ user_id: req.user.id, role: requestedRole }, { onConflict: 'user_id,role' });
+  if (error) {
+    console.error('Role assignment failed:', error.message);
+    return res.status(500).json({ success: false, message: 'This panel role could not be added.' });
+  }
+  return res.status(200).json({ success: true, role: requestedRole });
+};
+
 // Admin-created store manager. This must use Supabase Auth admin APIs so the
 // account is confirmed immediately and the password entered by Admin is valid.
 export const createStoreManager = async (req, res) => {
@@ -215,18 +236,8 @@ export const createStoreManager = async (req, res) => {
 
     let userId;
     if (existingAuthUser) {
-      // A previous failed attempt may have created the Auth user with a
-      // different/unknown password. Reset it so Admin's current password is
-      // always the one that works at Store Login.
-      const { data: updated, error: updateAuthError } = await supabase.auth.admin.updateUserById(existingAuthUser.id, {
-        password: String(password),
-        email_confirm: true,
-        user_metadata: userMetadata,
-      });
-      if (updateAuthError || !updated?.user) {
-        return res.status(400).json({ success: false, message: updateAuthError?.message || 'Manager account could not be updated.' });
-      }
-      userId = updated.user.id;
+      // Never overwrite or reset an existing user's password.
+      userId = existingAuthUser.id;
     } else {
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
         email: cleanEmail,
@@ -240,14 +251,20 @@ export const createStoreManager = async (req, res) => {
       userId = created.user.id;
     }
 
-    const { error: profileError } = await supabase.from('users').upsert({
+    const profilePayload = {
       id: userId,
       name: name.trim(),
       email: cleanEmail,
       phone: String(phone || '').trim(),
-      role: 'store_manager',
-    }, { onConflict: 'id' });
+    };
+    if (!existingAuthUser) profilePayload.role = 'store_manager';
+    const { error: profileError } = await supabase.from('users').upsert(profilePayload, { onConflict: 'id' });
     if (profileError) throw profileError;
+
+    const { error: roleError } = await supabase
+      .from('user_roles')
+      .upsert({ user_id: userId, role: 'store_manager' }, { onConflict: 'user_id,role' });
+    if (roleError) throw roleError;
 
     const { error: linkError } = await supabase
       .from('store_staff')
@@ -257,7 +274,7 @@ export const createStoreManager = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: `Manager "${name.trim()}" created and linked to "${store.store_name}".`,
-      data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId },
+      data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId, existingAccount: Boolean(existingAuthUser) },
     });
   } catch (error) {
     console.error('Store manager creation failed:', error?.message || error);

@@ -19,14 +19,15 @@ export default function StoreGuard({ children }) {
       }
 
       const { data: profileRow } = await supabase
-        .from('users')
+        .from('user_roles')
         .select('role')
-        .eq('id', user.id)
+        .eq('user_id', user.id)
+        .eq('role', 'store_manager')
         .maybeSingle();
 
       if (!active) return;
 
-      const isManager = String(profileRow?.role || '').toLowerCase() === 'store_manager';
+      const isManager = profileRow?.role === 'store_manager';
       let hasActiveStore = false;
       if (isManager) {
         const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);

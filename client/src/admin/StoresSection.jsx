@@ -391,7 +391,9 @@ const StoresSection = ({ searchQuery = '' }) => {
         throw new Error(result?.message || `Manager creation failed (${response.status}).`);
       }
       setManagerModal(null);
-      showNotice('success', `${result.message || `Manager "${managerForm.name.trim()}" created.`} Login now works with the entered password.`);
+      showNotice('success', result.data?.existingAccount
+        ? `${result.message || 'Store Manager linked.'} The existing password was not changed.`
+        : `${result.message || `Manager "${managerForm.name.trim()}" created.`} Login is ready.`);
       await loadAll();
     } catch (err) {
       showNotice('error', err.message || 'Manager account could not be created.');

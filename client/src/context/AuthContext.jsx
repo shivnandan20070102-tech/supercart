@@ -421,13 +421,14 @@ export const AuthProvider = ({ children }) => {
 
     clearLoginAttempts(cleanEmail);
     if (expectedRole) {
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
+      const requiredRole = expectedRole === 'delivery_partner' ? 'delivery' : expectedRole;
+      const { data: roleRow, error: roleError } = await supabase
+        .from('user_roles')
         .select('role')
-        .eq('id', data.user.id)
+        .eq('user_id', data.user.id)
+        .eq('role', requiredRole)
         .maybeSingle();
-      const actualRole = String(profile?.role || '').trim().toLowerCase();
-      if (profileError || actualRole !== expectedRole) {
+      if (roleError || !roleRow) {
         await supabase.auth.signOut();
         return {
           success: false,
@@ -446,6 +447,26 @@ export const AuthProvider = ({ children }) => {
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true };
     }
+    const requestedRole = role === 'delivery_partner' ? 'delivery' : role;
+    // Supabase intentionally obscures existing-email signup errors. A
+    // successful password check is therefore the reliable existing-account
+    // path and adds only the role for this panel.
+    const existingLogin = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    if (!existingLogin.error && existingLogin.data?.session) {
+      const roleResponse = await fetch('/api/auth/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${existingLogin.data.session.access_token}` },
+        body: JSON.stringify({ role: requestedRole }),
+      });
+      const roleResult = await roleResponse.json().catch(() => null);
+      if (!roleResponse.ok || !roleResult?.success) {
+        await supabase.auth.signOut();
+        return { success: false, message: roleResult?.message || 'This panel role could not be added.' };
+      }
+      const activeUser = saveSupabaseUser(existingLogin.data.user, 'email');
+      localStorage.setItem('supercart_token', existingLogin.data.session.access_token);
+      return { success: true, user: activeUser, existingAccount: true };
+    }
     const { data, error } = await supabase.auth.signUp({
       email: cleanEmail,
       password,
@@ -455,6 +476,26 @@ export const AuthProvider = ({ children }) => {
       },
     });
     if (error) {
+      if (/already registered|already exists|user already/i.test(error.message || '')) {
+        const login = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        if (login.error || !login.data?.session) {
+          return { success: false, message: 'This email is already registered. Enter its correct password to add this panel.' };
+        }
+        const token = login.data.session.access_token;
+        const roleResponse = await fetch('/api/auth/role', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ role: requestedRole }),
+        });
+        const roleResult = await roleResponse.json().catch(() => null);
+        if (!roleResponse.ok || !roleResult?.success) {
+          await supabase.auth.signOut();
+          return { success: false, message: roleResult?.message || 'This panel role could not be added.' };
+        }
+        const activeUser = saveSupabaseUser(login.data.user, 'email');
+        localStorage.setItem('supercart_token', token);
+        return { success: true, user: activeUser, existingAccount: true };
+      }
       const friendly = toFriendlySupabaseAuthError(error);
       if (friendly !== String(error.message || '')) {
         return { success: false, message: friendly, isRateLimited: true };

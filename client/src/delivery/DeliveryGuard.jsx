@@ -18,12 +18,17 @@ export default function DeliveryGuard({ children }) {
       }
 
       const { data: profileRow } = await supabase
-        .from('users')
+        .from('user_roles')
         .select('role')
-        .eq('id', user.id)
+        .eq('user_id', user.id)
+        .eq('role', 'delivery')
         .maybeSingle();
 
       if (!active) return;
+      if (!profileRow) {
+        setState({ loading: false, allowed: false, redirect: '/delivery/login' });
+        return;
+      }
 
       const { data: deliveryProfile } = await supabase
         .from('delivery_profiles')

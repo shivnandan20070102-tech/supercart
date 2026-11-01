@@ -48,12 +48,13 @@ const Login = () => {
     let active = true;
     const redirectCustomer = async () => {
       const { data: profile, error } = await supabase
-        .from('users')
+        .from('user_roles')
         .select('role')
-        .eq('id', user.id)
+        .eq('user_id', user.id)
+        .eq('role', 'customer')
         .maybeSingle();
       if (!active) return;
-      if (!error && String(profile?.role || '').toLowerCase() === 'customer') {
+      if (!error && profile?.role === 'customer') {
         navigate('/', { replace: true });
       } else {
         await supabase.auth.signOut();

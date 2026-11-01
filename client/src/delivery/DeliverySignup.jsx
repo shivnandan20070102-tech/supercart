@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { ArrowRight, CheckCircle2, Eye, EyeOff, LockKeyhole, Mail, Phone, Truck, UserRound } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
+import { useAuth } from '../context/AuthContext';
 
 const inputClass = 'mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20';
 
 const DeliverySignup = () => {
   const navigate = useNavigate();
+  const { signUpWithEmail } = useAuth();
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirmPassword: '', referralCode: new URLSearchParams(window.location.search).get('ref')?.trim().toUpperCase() || '' });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -28,29 +30,29 @@ const DeliverySignup = () => {
     }
     setLoading(true);
 
-    const { data, error: signupError } = await supabase.auth.signUp({
+    const result = await signUpWithEmail({
+      name: form.name,
       email: form.email,
+      phone: form.phone,
       password: form.password,
-      options: {
-        data: { full_name: form.name, phone: form.phone, role: 'delivery_partner', referral_code: form.referralCode.trim().toUpperCase() || null },
-        emailRedirectTo: window.location.origin,
-      },
+      role: 'delivery_partner',
     });
 
-    if (signupError) {
-      setError(signupError.message);
+    if (!result.success) {
+      setError(result.message || 'Account could not be created.');
       setLoading(false);
       return;
     }
 
-    if (!data.session) {
-      setMessage('Account created. Please verify your email, then login. Your Home Area and document setup will open there.');
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (result.needsEmailConfirmation || userError || !user) {
+      setMessage(result.message || 'Account created. Please verify your email, then login.');
       setLoading(false);
       return;
     }
 
     const { error: profileError } = await supabase.from('delivery_profiles').upsert({
-      user_id: data.user.id,
+      user_id: user.id,
       name: form.name,
       email: form.email,
       phone: form.phone,
@@ -65,16 +67,16 @@ const DeliverySignup = () => {
     }
 
     const referralCode = form.referralCode.trim().toUpperCase();
-    if (referralCode && data.user) {
+    if (referralCode && user) {
       const { data: referrer } = await supabase
         .from('delivery_profiles')
         .select('user_id')
         .eq('referral_code', referralCode)
         .maybeSingle();
-      if (referrer?.user_id && referrer.user_id !== data.user.id) {
+      if (referrer?.user_id && referrer.user_id !== user.id) {
         const { error: referralError } = await supabase.from('referrals').upsert({
           referrer_id: referrer.user_id,
-          referred_user_id: data.user.id,
+          referred_user_id: user.id,
           referral_code: referralCode,
           bonus_amount: 0,
         });

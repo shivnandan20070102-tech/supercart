@@ -79,7 +79,7 @@ const DeliveryLogin = () => {
 
     const result = isSignup
       ? await signUpWithEmail({ ...form, role: 'delivery_partner' })
-      : await signInWithEmail(form.email.trim(), form.password);
+      : await signInWithEmail(form.email.trim(), form.password, 'delivery_partner');
     if (!result.success) {
       setError(result.message || 'Login failed.');
       setLoading(false);
