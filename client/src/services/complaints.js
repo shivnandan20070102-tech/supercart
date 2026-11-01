@@ -42,7 +42,14 @@ export const uploadComplaintPhoto = async (supabase, userId, file) => {
   const safeName = String(file.name || 'photo.jpg').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'photo.jpg';
   const path = `complaints/${ownerId}/${crypto.randomUUID()}-${safeName}`;
   const { error } = await supabase.storage.from(COMPLAINT_PHOTO_BUCKET).upload(path, file, { contentType: file.type });
-  if (error) throw friendlyError(error);
+  if (error) {
+    console.error('[complaints] photo upload failed:', {
+      bucket: COMPLAINT_PHOTO_BUCKET,
+      path,
+      message: error.message,
+    });
+    throw friendlyError(error);
+  }
   return path;
 };
 
@@ -112,7 +119,7 @@ export const submitComplaint = async (supabase, { userId, type, name, subject, d
   } catch (error) {
     if (error?.isRateLimited || (!isNetworkFailure(error) && error?.status)) throw error;
   }
-  const { data, error } = await supabase.from('complaints').insert({
+  const payload = {
     complainant_id: ownerId,
     complainant_type: type,
     complainant_name: String(name || '').slice(0, 120),
@@ -122,7 +129,14 @@ export const submitComplaint = async (supabase, { userId, type, name, subject, d
     photo_urls: photoUrls,
     status: 'pending',
     admin_response: '',
-  }).select().single();
+  };
+  let { data, error } = await supabase.from('complaints').insert(payload).select().single();
+  if (error && /photo_urls|column|schema cache/i.test(error.message || '')) {
+    console.warn('[complaints] photo_urls column missing; using legacy photo_url fallback:', error.message);
+    const legacyPayload = { ...payload };
+    delete legacyPayload.photo_urls;
+    ({ data, error } = await supabase.from('complaints').insert(legacyPayload).select().single());
+  }
   if (error) throw friendlyError(error);
   return data;
 };

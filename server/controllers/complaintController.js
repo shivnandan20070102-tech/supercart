@@ -41,21 +41,27 @@ export const submitComplaint = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please describe the issue.' });
     }
 
-    const { data, error } = await supabase
+    const complaintPayload = {
+      complainant_id: String(userId),
+      complainant_type: type,
+      complainant_name: name,
+      subject,
+      description,
+      photo_url: photoUrl,
+      photo_urls: photoUrls.length ? photoUrls : (photoUrl ? [photoUrl] : []),
+      status: 'pending',
+      admin_response: '',
+    };
+    let { data, error } = await supabase
       .from('complaints')
-      .insert({
-        complainant_id: String(userId),
-        complainant_type: type,
-        complainant_name: name,
-        subject,
-        description,
-        photo_url: photoUrl,
-        photo_urls: photoUrls.length ? photoUrls : (photoUrl ? [photoUrl] : []),
-        status: 'pending',
-        admin_response: '',
-      })
+      .insert(complaintPayload)
       .select()
       .single();
+    if (error && /photo_urls|column|schema cache/i.test(error.message || '')) {
+      const legacyPayload = { ...complaintPayload };
+      delete legacyPayload.photo_urls;
+      ({ data, error } = await supabase.from('complaints').insert(legacyPayload).select().single());
+    }
 
     if (error) {
       return res.status(500).json({

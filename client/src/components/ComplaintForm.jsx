@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ImagePlus, LoaderCircle, Send, X } from 'lucide-react';
 import { supabase } from '../config/supabase';
 import { fetchMyComplaints, resolveComplaintPhotoUrls, submitComplaint, validateComplaint } from '../services/complaints';
@@ -34,6 +34,7 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [mine, setMine] = useState([]);
   const [listLoading, setListLoading] = useState(true);
+  const fileInputRef = useRef(null);
 
   const card = dark ? 'bg-slate-900 text-white' : 'bg-white text-slate-900';
   const input = dark
@@ -150,7 +151,9 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
                   }
                   setFiles(next);
                   setPreviews(next.map((file) => URL.createObjectURL(file)));
+                  e.target.value = '';
                 }}
+                ref={fileInputRef}
               />
             </label>
             {files.length > 0 && <p className={`mt-2 text-xs font-bold ${muted}`}>{files.length}/3</p>}
@@ -158,7 +161,7 @@ const ComplaintForm = ({ dark = false, complainantType, userId, userName }) => {
               {previews.map((previewUrl, index) => (
                 <div key={previewUrl} className="relative">
                   <img src={previewUrl} alt={`Selected complaint photo ${index + 1}`} className="h-20 w-20 rounded-xl object-cover" />
-                  <button type="button" onClick={() => { setFiles(files.filter((_, i) => i !== index)); setPreviews(previews.filter((_, i) => i !== index)); }} className="absolute -right-1.5 -top-1.5 rounded-full bg-rose-600 p-1 text-white" aria-label="Remove photo"><X className="h-3 w-3" /></button>
+                  <button type="button" onClick={() => { setFiles(files.filter((_, i) => i !== index)); setPreviews(previews.filter((_, i) => i !== index)); if (fileInputRef.current) fileInputRef.current.value = ''; }} className="absolute -right-1.5 -top-1.5 rounded-full bg-rose-600 p-1 text-white" aria-label="Remove photo"><X className="h-3 w-3" /></button>
                 </div>
               ))}
             </div>
