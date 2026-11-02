@@ -405,7 +405,7 @@ export const AuthProvider = ({ children }) => {
       return { success: false, message: 'Please use your original email address for the User Panel.' };
     }
     const authEmail = getPanelAuthEmail(cleanEmail, panel);
-    const preBlocked = getLoginBlockState(cleanEmail);
+    const preBlocked = getLoginBlockState(cleanEmail, panel);
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true, retryAfterSeconds: preBlocked.retryAfterSeconds || 0 };
     }
@@ -413,7 +413,7 @@ export const AuthProvider = ({ children }) => {
     if (error) {
       const friendly = toFriendlySupabaseAuthError(error);
       const isSupabaseRateLimited = friendly !== String(error.message || '');
-      const after = recordFailedLoginAttempt(cleanEmail);
+      const after = recordFailedLoginAttempt(cleanEmail, panel);
       // 5 fail ke baad agla attempt blocked — abhi se block message dikhao
       // taaki user ko exact wait pata chale (backend 6th-429 jaisa).
       if (after.blocked) {
@@ -425,7 +425,7 @@ export const AuthProvider = ({ children }) => {
       return { success: false, message: error.message };
     }
 
-    clearLoginAttempts(cleanEmail);
+    clearLoginAttempts(cleanEmail, panel);
     if (expectedRole) {
       const requiredRole = expectedRole === 'delivery_partner' ? 'delivery' : expectedRole;
       const { data: roleRows, error: roleError } = await supabase
@@ -448,11 +448,11 @@ export const AuthProvider = ({ children }) => {
 
   const signUpWithEmail = async ({ name, email, password, phone, role = 'customer' }) => {
     const cleanEmail = String(email || '').trim();
-    const preBlocked = getSignupBlockState(cleanEmail);
+    const panel = role === 'delivery_partner' ? 'delivery' : role === 'store_manager' ? 'store_manager' : 'customer';
+    const preBlocked = getSignupBlockState(cleanEmail, panel);
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true };
     }
-    const panel = role === 'delivery_partner' ? 'delivery' : role === 'store_manager' ? 'store_manager' : 'customer';
     if (panel === 'customer' && isReservedPanelEmail(cleanEmail)) {
       return { success: false, message: 'Reserved panel email tags are not allowed here.' };
     }
@@ -463,10 +463,10 @@ export const AuthProvider = ({ children }) => {
     });
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.success) {
-      recordFailedSignupAttempt(cleanEmail);
+      recordFailedSignupAttempt(cleanEmail, panel);
       return { success: false, message: result?.message || 'Account could not be created.' };
     }
-    clearSignupAttempts(cleanEmail);
+    clearSignupAttempts(cleanEmail, panel);
     return { success: true, needsEmailConfirmation: result.needsEmailConfirmation !== false, message: result.message, user: result.data };
     /*
     const requestedRole = role === 'delivery_partner' ? 'delivery' : role;

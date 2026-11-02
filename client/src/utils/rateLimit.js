@@ -73,8 +73,8 @@ const SIGNUP_WINDOW_MS = 60 * 60 * 1000;
 const LOGIN_BLOCK_MESSAGE = 'Too many login attempts, 15 minute baad try karein';
 const SIGNUP_BLOCK_MESSAGE = 'Bahut zyada signup attempts ho gaye, 1 ghante baad try karein';
 
-const storageKey = (kind, email) =>
-  `supercart_rl_${kind}_${String(email || '').trim().toLowerCase() || 'unknown'}`;
+const storageKey = (kind, email, scope = 'customer') =>
+  `supercart_rl_${kind}_${String(scope || 'customer').trim().toLowerCase()}_${String(email || '').trim().toLowerCase() || 'unknown'}`;
 
 const readAttempts = (key) => {
   try {
@@ -100,9 +100,9 @@ const minutesLeft = (stamps) => {
 };
 
 // Blocked hai? { blocked, message, retryAfterMinutes }
-export const getLoginBlockState = (email) => {
+export const getLoginBlockState = (email, scope = 'customer') => {
   try {
-    const key = storageKey('login', email);
+    const key = storageKey('login', email, scope);
     const stamps = prune(readAttempts(key), LOGIN_WINDOW_MS);
     if (stamps.length >= LOGIN_MAX) {
       const mins = Math.max(
@@ -125,30 +125,30 @@ export const getLoginBlockState = (email) => {
 
 // Galat-password attempt record karo. 5th fail ke BAAD 6th blocked milega.
 // Returns block-state (agla attempt blocked hai ya nahi).
-export const recordFailedLoginAttempt = (email) => {
+export const recordFailedLoginAttempt = (email, scope = 'customer') => {
   try {
-    const key = storageKey('login', email);
+    const key = storageKey('login', email, scope);
     const stamps = prune(readAttempts(key), LOGIN_WINDOW_MS);
     stamps.push(Date.now());
     try {
       localStorage.setItem(key, JSON.stringify(stamps.slice(-LOGIN_MAX)));
     } catch { /* ignore */ }
-    return getLoginBlockState(email);
+    return getLoginBlockState(email, scope);
   } catch {
     return { blocked: false };
   }
 };
 
-export const clearLoginAttempts = (email) => {
+export const clearLoginAttempts = (email, scope = 'customer') => {
   try {
-    localStorage.removeItem(storageKey('login', email));
+    localStorage.removeItem(storageKey('login', email, scope));
   } catch { /* ignore */ }
 };
 
 // Signup mirror (3/hour) — backend limiter ka client reflection.
-export const getSignupBlockState = (email) => {
+export const getSignupBlockState = (email, scope = 'customer') => {
   try {
-    const key = storageKey('signup', email);
+    const key = storageKey('signup', email, scope);
     const cutoff = Date.now() - SIGNUP_WINDOW_MS;
     const stamps = readAttempts(key).filter((t) => t > cutoff);
     if (stamps.length >= SIGNUP_MAX) {
@@ -160,9 +160,9 @@ export const getSignupBlockState = (email) => {
   }
 };
 
-export const recordFailedSignupAttempt = (email) => {
+export const recordFailedSignupAttempt = (email, scope = 'customer') => {
   try {
-    const key = storageKey('signup', email);
+    const key = storageKey('signup', email, scope);
     const cutoff = Date.now() - SIGNUP_WINDOW_MS;
     const stamps = readAttempts(key).filter((t) => t > cutoff);
     stamps.push(Date.now());
@@ -172,9 +172,9 @@ export const recordFailedSignupAttempt = (email) => {
   } catch { /* ignore */ }
 };
 
-export const clearSignupAttempts = (email) => {
+export const clearSignupAttempts = (email, scope = 'customer') => {
   try {
-    localStorage.removeItem(storageKey('signup', email));
+    localStorage.removeItem(storageKey('signup', email, scope));
   } catch { /* ignore */ }
 };
 
