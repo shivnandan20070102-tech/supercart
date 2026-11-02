@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Crosshair,
   ExternalLink,
+  Eye,
+  EyeOff,
   Loader2,
   MapPin,
   Package,
@@ -33,7 +35,7 @@ const toTimeInput = (v) => {
   if (!m) return '';
   return `${m[1].padStart(2, '0')}:${m[2]}`;
 };
-const emptyManager = { name: '', email: '', phone: '' };
+const emptyManager = { name: '', email: '', phone: '', password: '' };
 
 const numOrNull = (v) => {
   if (v === '' || v == null) return null;
@@ -67,6 +69,7 @@ const StoresSection = ({ searchQuery = '' }) => {
 
   const [managerModal, setManagerModal] = useState(null); // store row | null
   const [managerForm, setManagerForm] = useState(emptyManager);
+  const [showManagerPassword, setShowManagerPassword] = useState(false);
   const [savingManager, setSavingManager] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState(null); // store row | null (confirmation popup)
@@ -358,6 +361,7 @@ const StoresSection = ({ searchQuery = '' }) => {
   // ---- 2. Manager account + store_staff link ----
   const openManagerModal = (store) => {
     setManagerForm(emptyManager);
+    setShowManagerPassword(false);
     setManagerModal(store);
   };
 
@@ -382,6 +386,7 @@ const StoresSection = ({ searchQuery = '' }) => {
           name: managerForm.name.trim(),
           email,
           phone: managerForm.phone.trim(),
+          password: managerForm.password.trim() || undefined,
           storeId: managerModal.id,
         }),
       });
@@ -390,7 +395,7 @@ const StoresSection = ({ searchQuery = '' }) => {
         throw new Error(result?.message || `Manager creation failed (${response.status}).`);
       }
       setManagerModal(null);
-      showNotice('success', `${result.message || `Manager "${managerForm.name.trim()}" created.`} A password setup email was sent.`);
+      showNotice('success', result.message || `Manager "${managerForm.name.trim()}" created.`);
       await loadAll();
     } catch (err) {
       showNotice('error', err.message || 'Manager account could not be created.');
@@ -905,7 +910,28 @@ const StoresSection = ({ searchQuery = '' }) => {
               <input value={managerForm.phone} onChange={(e) => setManagerForm({ ...managerForm, phone: e.target.value })} placeholder="+91-98XXXXXXX" className={`${inputCls} mt-1.5`} />
             </label>
             <label className="text-xs font-bold text-slate-400">
-              The manager will receive a password setup email.
+              Password (optional)
+              <span className="relative mt-1.5 block">
+                <input
+                  type={showManagerPassword ? 'text' : 'password'}
+                  minLength={6}
+                  value={managerForm.password}
+                  onChange={(e) => setManagerForm({ ...managerForm, password: e.target.value })}
+                  placeholder="At least 6 characters"
+                  className={`${inputCls} pr-10`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowManagerPassword((visible) => !visible)}
+                  aria-label={showManagerPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                >
+                  {showManagerPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </span>
+              <span className="mt-1 block text-[11px] font-normal text-slate-500">
+                Leave blank to send a password setup email.
+              </span>
             </label>
             <button
               type="submit"

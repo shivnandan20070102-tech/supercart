@@ -190,13 +190,17 @@ export const signupUser = async (req, res) => {
 // account is confirmed immediately and the password entered by Admin is valid.
 export const createStoreManager = async (req, res) => {
   try {
-    const { name, email, phone, storeId } = req.body || {};
+    const { name, email, phone, password, storeId } = req.body || {};
     const cleanEmail = normalizePanelEmail(email);
     const authEmail = getPanelAuthEmail(cleanEmail, 'store_manager');
     const parsedStoreId = Number(storeId);
+    const managerPassword = typeof password === 'string' ? password.trim() : '';
 
     if (!name?.trim() || !cleanEmail || !Number.isInteger(parsedStoreId)) {
       return res.status(400).json({ success: false, message: 'Name, email, and store are required.' });
+    }
+    if (managerPassword && managerPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
     }
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return res.status(503).json({
@@ -265,16 +269,29 @@ export const createStoreManager = async (req, res) => {
           message: 'A different panel identity already uses this tagged email.',
         });
       }
+      if (managerPassword) {
+        const { error: passwordError } = await supabase.auth.admin.updateUserById(existingAuthUser.id, {
+          password: managerPassword,
+          email_confirm: true,
+          user_metadata: userMetadata,
+        });
+        if (passwordError) {
+          return res.status(400).json({ success: false, message: passwordError.message || 'Manager password could not be updated.' });
+        }
+      }
       userId = existingAuthUser.id;
     } else {
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
         email: authEmail,
-        password: crypto.randomBytes(24).toString('base64url'),
-        email_confirm: false,
+        password: managerPassword || crypto.randomBytes(24).toString('base64url'),
+        email_confirm: Boolean(managerPassword),
         user_metadata: userMetadata,
       });
       if (createError || !created?.user) {
-        return res.status(400).json({ success: false, message: createError?.message || 'Manager account could not be created.' });
+        const dbHint = /database error|new user/i.test(createError?.message || '')
+          ? ' (Supabase trigger/constraint issue — run server/fix_panel_auth_roles.sql in the SQL Editor)'
+          : '';
+        return res.status(400).json({ success: false, message: `${createError?.message || 'Manager account could not be created.'}${dbHint}` });
       }
       userId = created.user.id;
     }
@@ -298,14 +315,18 @@ export const createStoreManager = async (req, res) => {
       .from('store_staff')
       .upsert({ store_id: parsedStoreId, user_id: userId }, { onConflict: 'store_id,user_id' });
     if (linkError) throw linkError;
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(authEmail, {
-      redirectTo: process.env.STORE_PASSWORD_RESET_REDIRECT_URL || process.env.PASSWORD_RESET_REDIRECT_URL,
-    });
-    if (resetError) console.warn('Store manager reset email warning:', resetError.message);
+    if (!managerPassword) {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(authEmail, {
+        redirectTo: process.env.STORE_PASSWORD_RESET_REDIRECT_URL || process.env.PASSWORD_RESET_REDIRECT_URL,
+      });
+      if (resetError) console.warn('Store manager reset email warning:', resetError.message);
+    }
 
     return res.status(201).json({
       success: true,
-      message: `Manager "${name.trim()}" created and linked to "${store.store_name}".`,
+      message: managerPassword
+        ? `Manager "${name.trim()}" created and linked to "${store.store_name}". They can log in with the password you set.`
+        : `Manager "${name.trim()}" created and linked to "${store.store_name}". A password setup email was sent.`,
       data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId, existingAccount: Boolean(existingAuthUser) },
     });
   } catch (error) {
