@@ -119,6 +119,30 @@ ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_email_key1;
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_email_unique;
 -- email NOT NULL rehta hai (sirf UNIQUE hata rahe hain)
 
+------------------------------------------------------------------
+-- 2A) users.id — manager profile upsert ke liye required key
+--     Purane installs me id par PK/UNIQUE missing ho sakta hai.
+------------------------------------------------------------------
+DELETE FROM public.users a
+USING public.users b
+WHERE a.ctid < b.ctid
+  AND a.id = b.id;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+        WHERE t.relname = 'users'
+          AND c.contype IN ('p', 'u')
+          AND a.attname = 'id'
+    ) THEN
+        ALTER TABLE public.users ADD CONSTRAINT users_id_unique UNIQUE (id);
+    END IF;
+END $$;
+
 -- ROLLBACK (Part 2):
 -- ALTER TABLE public.users ADD CONSTRAINT users_email_key UNIQUE (email);
 

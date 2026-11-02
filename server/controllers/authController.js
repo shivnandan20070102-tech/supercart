@@ -310,7 +310,16 @@ export const createStoreManager = async (req, res) => {
     };
     if (!existingAuthUser) profilePayload.role = 'store_manager';
     step = 'saving manager profile';
-    const { error: profileError } = await supabase.from('users').upsert(profilePayload, { onConflict: 'id' });
+    const { data: existingProfile, error: profileReadError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+    if (profileReadError) throw profileReadError;
+    const profileQuery = existingProfile
+      ? supabase.from('users').update(profilePayload).eq('id', userId)
+      : supabase.from('users').insert(profilePayload);
+    const { error: profileError } = await profileQuery;
     if (profileError) throw profileError;
 
     step = 'saving manager role';
