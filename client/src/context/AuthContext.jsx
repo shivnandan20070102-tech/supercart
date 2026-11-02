@@ -556,6 +556,21 @@ export const AuthProvider = ({ children }) => {
     */
   };
 
+  const resendVerificationEmail = async (email, role = 'customer') => {
+    const panel = role === 'delivery_partner' ? 'delivery' : role === 'store_manager' ? 'store_manager' : 'customer';
+    const cleanEmail = normalizePanelEmail(email);
+    if (panel === 'customer' && isReservedPanelEmail(cleanEmail)) {
+      return { success: false, message: 'Please use your original email address.' };
+    }
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: getPanelAuthEmail(cleanEmail, panel),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    if (error) return { success: false, message: toFriendlySupabaseAuthError(error) };
+    return { success: true, message: 'Verification email sent.' };
+  };
+
   const logout = async () => {
     try {
       await supabase.auth.signOut();
