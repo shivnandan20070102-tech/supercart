@@ -189,6 +189,7 @@ export const signupUser = async (req, res) => {
 // Admin-created store manager. This must use Supabase Auth admin APIs so the
 // account is confirmed immediately and the password entered by Admin is valid.
 export const createStoreManager = async (req, res) => {
+  let step = 'validation';
   try {
     const { name, email, phone, password, storeId } = req.body || {};
     const cleanEmail = normalizePanelEmail(email);
@@ -209,6 +210,7 @@ export const createStoreManager = async (req, res) => {
       });
     }
 
+    step = 'checking admin access';
     const { data: adminProfileById, error: adminProfileByIdError } = await supabase
       .from('users')
       .select('role')
@@ -235,6 +237,7 @@ export const createStoreManager = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only an admin can create store managers.' });
     }
 
+    step = 'checking store';
     const { data: store, error: storeError } = await supabase
       .from('stores')
       .select('id,store_name,is_active')
@@ -249,6 +252,7 @@ export const createStoreManager = async (req, res) => {
       phone: String(phone || '').trim(),
       role: 'store_manager',
     };
+    step = 'checking existing auth account';
     const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listError) throw listError;
     const existingAuthUser = (authUsers?.users || []).find(
@@ -257,6 +261,7 @@ export const createStoreManager = async (req, res) => {
 
     let userId;
     if (existingAuthUser) {
+      step = 'updating existing auth account';
       const { data: existingRole, error: existingRoleError } = await supabase
         .from('user_roles')
         .select('role')
@@ -281,6 +286,7 @@ export const createStoreManager = async (req, res) => {
       }
       userId = existingAuthUser.id;
     } else {
+      step = 'creating auth account';
       const { data: created, error: createError } = await supabase.auth.admin.createUser({
         email: authEmail,
         password: managerPassword || crypto.randomBytes(24).toString('base64url'),
@@ -303,19 +309,23 @@ export const createStoreManager = async (req, res) => {
       phone: String(phone || '').trim(),
     };
     if (!existingAuthUser) profilePayload.role = 'store_manager';
+    step = 'saving manager profile';
     const { error: profileError } = await supabase.from('users').upsert(profilePayload, { onConflict: 'id' });
     if (profileError) throw profileError;
 
+    step = 'saving manager role';
     const { error: roleError } = await supabase
       .from('user_roles')
       .upsert({ user_id: userId, role: 'store_manager' }, { onConflict: 'user_id' });
     if (roleError) throw roleError;
 
+    step = 'linking manager to store';
     const { error: linkError } = await supabase
       .from('store_staff')
       .upsert({ store_id: parsedStoreId, user_id: userId }, { onConflict: 'store_id,user_id' });
     if (linkError) throw linkError;
     if (!managerPassword) {
+      step = 'sending password setup email';
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(authEmail, {
         redirectTo: process.env.STORE_PASSWORD_RESET_REDIRECT_URL || process.env.PASSWORD_RESET_REDIRECT_URL,
       });
@@ -330,8 +340,12 @@ export const createStoreManager = async (req, res) => {
       data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId, existingAccount: Boolean(existingAuthUser) },
     });
   } catch (error) {
-    console.error('Store manager creation failed:', error?.message || error);
-    return res.status(500).json({ success: false, message: 'Manager account could not be created.' });
+    const detail = error?.message || 'Unknown error';
+    console.error(`Store manager creation failed during ${step}:`, detail);
+    return res.status(500).json({
+      success: false,
+      message: `Manager account could not be created while ${step}: ${detail}`,
+    });
   }
 };
 
