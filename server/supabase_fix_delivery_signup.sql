@@ -106,21 +106,32 @@ DECLARE
     account_phone TEXT := COALESCE(NEW.raw_user_meta_data ->> 'phone', '');
     requested_role TEXT := COALESCE(NEW.raw_user_meta_data ->> 'role', 'customer');
 BEGIN
-    INSERT INTO public.users (id, name, email, phone, role)
-    VALUES (
-      NEW.id,
-      account_name,
-      NEW.email,
-      account_phone,
-      CASE WHEN requested_role IN ('delivery', 'delivery_partner') THEN 'delivery' ELSE 'customer' END
-    )
-    ON CONFLICT (id) DO UPDATE
-      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone;
+    -- NEVER let profile creation abort the auth signup. Each write is wrapped
+    -- in its own sub-block so any error (constraint, missing table, RLS,
+    -- trigger) is swallowed, logged, and the signup still succeeds.
+    BEGIN
+      INSERT INTO public.users (id, name, email, phone, role)
+      VALUES (
+        NEW.id,
+        account_name,
+        NEW.email,
+        account_phone,
+        CASE WHEN requested_role IN ('delivery', 'delivery_partner') THEN 'delivery' ELSE 'customer' END
+      )
+      ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone;
+      EXCEPTION WHEN others THEN
+        RAISE NOTICE 'auth_user_profile insert skipped: %', SQLERRM;
+    END;
 
     IF requested_role IN ('delivery', 'delivery_partner') THEN
-      INSERT INTO public.delivery_profiles (user_id, name, email, phone, approval_status, profile_completed)
-      VALUES (NEW.id, account_name, NEW.email, account_phone, 'pending', false)
-      ON CONFLICT (user_id) DO NOTHING;
+      BEGIN
+        INSERT INTO public.delivery_profiles (user_id, name, email, phone, approval_status, profile_completed)
+        VALUES (NEW.id, account_name, NEW.email, account_phone, 'pending', false)
+        ON CONFLICT (user_id) DO NOTHING;
+        EXCEPTION WHEN others THEN
+          RAISE NOTICE 'delivery_profile insert skipped: %', SQLERRM;
+      END;
     END IF;
     RETURN NEW;
 END;
