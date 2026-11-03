@@ -448,20 +448,50 @@ export const AuthProvider = ({ children }) => {
     if (preBlocked.blocked) {
       return { success: false, message: preBlocked.message, isRateLimited: true };
     }
-    const response = await fetch('/api/auth/signup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email: cleanEmail, password, phone, panel }),
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok || !result?.success) {
+    // Backend URL — frontend (Vercel/localhost) se alag server par hai, isliye
+    // RELATIVE fetch galat hai (ye frontend ke domain par jata hai aur HTML
+    // wapas karta hai → "Account could not be created" generic error).
+    // Baaki API calls ki tarah absolute backend base URL use karo.
+    const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
+    const urlsToTry = [
+      `${API_BASE_URL}/api/auth/signup`,
+      `${API_BASE_URL}/signup`,
+    ];
+    let response = null;
+    let result = null;
+    let lastError = null;
+    for (const url of urlsToTry) {
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email: cleanEmail, password, phone, panel }),
+        });
+        result = await response.json().catch(() => null);
+        // Backend tak request pahunch gayi (200, 400, 409, 429, 500...) —
+        // server ka faisla final hai.
+        break;
+      } catch (error) {
+        lastError = error;
+        const isNetworkFailure =
+          error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(error?.message || '');
+        if (!isNetworkFailure) break;
+      }
+    }
+    const outcome = { success: response?.ok && result?.success, status: response?.status, body: result, networkError: lastError };
+    if (!outcome.success) {
       recordFailedSignupAttempt(cleanEmail, panel);
       console.error('[AuthContext] signup failed:', {
-        status: response.status,
-        code: result?.code,
-        message: result?.message || 'Account could not be created.',
+        status: outcome.status,
+        code: outcome.body?.code,
+        message: outcome.body?.message || (lastError?.message || 'Account could not be created.'),
+        networkError: lastError?.message || null,
       });
-      return { success: false, message: result?.message || 'Account could not be created.', code: result?.code };
+      return {
+        success: false,
+        message: outcome.body?.message || (lastError?.message || 'Account could not be created.'),
+        code: outcome.body?.code,
+      };
     }
     clearSignupAttempts(cleanEmail, panel);
     return { success: true, needsEmailConfirmation: result.needsEmailConfirmation !== false, message: result.message, user: result.data };
