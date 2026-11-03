@@ -119,7 +119,31 @@ export const createStoreManager = async (req, res) => {
     }
 
     const databaseRole = String(adminProfile?.role || '').trim().toLowerCase();
-    if (databaseRole !== 'admin') {
+
+    // Match the admin panel's own admin check (AdminLogin): a user is admin if
+    // their Supabase auth user_metadata role OR their users-table role is
+    // 'admin'. The old multi-role system stored the role in user_roles and in
+    // auth metadata; after the half-done restore the users-table column can lag
+    // behind. Check both so a real admin is never locked out.
+    const metadataRole = String(req.user?.user_metadata?.role || '').trim().toLowerCase();
+    let isAdmin = databaseRole === 'admin' || metadataRole === 'admin';
+
+    if (!isAdmin) {
+      // Legacy role-system fallback: some accounts have role only in user_roles.
+      try {
+        const { data: legacyRole } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', req.user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+        isAdmin = Boolean(legacyRole);
+      } catch {
+        // user_roles table may not exist (new schema) — not an error.
+      }
+    }
+
+    if (!isAdmin) {
       return res.status(403).json({ success: false, message: 'Only an admin can create store managers.' });
     }
 
