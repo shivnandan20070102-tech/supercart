@@ -43,6 +43,7 @@ const DeliverySignup = () => {
     });
 
     if (!result.success) {
+      console.error('[DeliverySignup] signup failed:', { code: result.code, message: result.message });
       setError(/already|exists|registered/i.test(result.message || '') ? 'Delivery identity pehle se bani hui hai. Login karo.' : (result.message || 'Account could not be created.'));
       setLoading(false);
       return;
@@ -64,7 +65,7 @@ const DeliverySignup = () => {
       profile_completed: false,
     }, { onConflict: 'user_id' });
     if (profileError) {
-      console.error('[DeliverySignup] Profile creation failed:', profileError);
+      console.error('[DeliverySignup] Profile creation failed:', { code: profileError.code, message: profileError.message });
       setError(profileError.message);
       setLoading(false);
       return;

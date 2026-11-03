@@ -43,10 +43,11 @@ export const signupUser = async (req, res) => {
     if (authError || !authData?.user) {
       const alreadyExists = /already|exists|duplicate/i.test(authError?.message || '');
       const message = authError?.message || 'Supabase did not return a user.';
-      console.error('Signup failed:', { panel, email: plainEmail, message });
+      console.error('Signup failed:', { panel, email: plainEmail, message, code: authError?.code });
       return res.status(alreadyExists ? 409 : 400).json({
         success: false,
         message,
+        code: authError?.code,
       });
     }
     return res.status(201).json({

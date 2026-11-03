@@ -456,7 +456,12 @@ export const AuthProvider = ({ children }) => {
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.success) {
       recordFailedSignupAttempt(cleanEmail, panel);
-      return { success: false, message: result?.message || 'Account could not be created.' };
+      console.error('[AuthContext] signup failed:', {
+        status: response.status,
+        code: result?.code,
+        message: result?.message || 'Account could not be created.',
+      });
+      return { success: false, message: result?.message || 'Account could not be created.', code: result?.code };
     }
     clearSignupAttempts(cleanEmail, panel);
     return { success: true, needsEmailConfirmation: result.needsEmailConfirmation !== false, message: result.message, user: result.data };
