@@ -2,7 +2,8 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import generateToken from '../utils/generateToken.js';
-import { getPanelAuthEmail, isReservedPanelEmail, normalizePanelEmail } from '../utils/panelEmail.js';
+
+const normalizePanelEmail = (email) => String(email || '').trim().toLowerCase();
 
 // In-memory fallback if table is not created yet
 let localUsers = [];
@@ -12,176 +13,60 @@ let localUsers = [];
 // @access  Public
 export const signupUser = async (req, res) => {
   try {
-    const signupInput = req.body;
-    const panel = signupInput.panel === 'delivery' ? 'delivery' : signupInput.panel === 'store_manager' ? 'store_manager' : 'customer';
+    const signupInput = req.body || {};
+    const panel = signupInput.panel === 'delivery' ? 'delivery' : 'customer';
     const plainEmail = normalizePanelEmail(signupInput.email);
-    if (!signupInput.name || !plainEmail || !signupInput.password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide name, email, and password',
-      });
+    const name = typeof signupInput.name === 'string' ? signupInput.name.trim() : '';
+    const password = typeof signupInput.password === 'string' ? signupInput.password : '';
+    const phone = typeof signupInput.phone === 'string' ? signupInput.phone.trim() : '';
+    if (!name || !plainEmail || !password) {
+      return res.status(400).json({ success: false, message: 'Please provide name, email, and password.' });
     }
-
-    if (panel === 'customer' && isReservedPanelEmail(plainEmail)) {
-      return res.status(400).json({ success: false, message: 'Reserved panel email tags are not allowed.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(plainEmail)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
     }
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(503).json({ success: false, message: 'Signup is not configured on the backend.' });
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
     }
-    const authEmail = getPanelAuthEmail(plainEmail, panel);
+    if (panel === 'delivery' && !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid 10-digit Indian phone number.' });
+    }
+    const requestedRole = panel === 'delivery' ? 'delivery' : 'customer';
     const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: authEmail,
-      password: signupInput.password,
+      email: plainEmail,
+      password,
       options: {
-        data: {
-          full_name: signupInput.name.trim(),
-          phone: signupInput.phone?.trim() || '',
-          role: panel,
-        },
-        emailRedirectTo: process.env.AUTH_EMAIL_REDIRECT_URL || undefined,
+        data: { full_name: name, phone, role: requestedRole },
+        emailRedirectTo: process.env.EMAIL_CONFIRM_REDIRECT_URL || undefined,
       },
     });
-
-    if (authError || !authData.user) {
-      return res.status(400).json({
+    if (authError || !authData?.user) {
+      const alreadyExists = /already|exists|duplicate/i.test(authError?.message || '');
+      const message = authError?.message || 'Supabase did not return a user.';
+      console.error('Signup failed:', { panel, email: plainEmail, message });
+      return res.status(alreadyExists ? 409 : 400).json({
         success: false,
-        message: authError?.message || 'Account could not be created. Please try again.',
+        message,
       });
-    }
-    if (panel === 'delivery' && authData.user.identities && authData.user.identities.length === 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'Delivery identity already exists. Login karo.',
-      });
-    }
-
-    const { error: roleError } = await supabase
-      .from('user_roles')
-      .insert({ user_id: authData.user.id, role: panel });
-    if (roleError) {
-      await supabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ success: false, message: 'Account role could not be assigned.' });
-    }
-    const { error: profileError } = await supabase
-      .from('users')
-      .upsert({
-        id: authData.user.id,
-        name: signupInput.name.trim(),
-        email: plainEmail,
-        phone: signupInput.phone?.trim() || '',
-        role: panel,
-      }, { onConflict: 'id' });
-    if (profileError) {
-      await supabase.from('user_roles').delete().eq('user_id', authData.user.id);
-      await supabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ success: false, message: 'Account profile could not be created.' });
     }
     return res.status(201).json({
       success: true,
-      message: authData.session
-        ? 'Account created successfully!'
-        : 'Account created. Please verify your email before logging in.',
-      needsEmailConfirmation: !authData.session,
+      message: 'Account created. Please verify your email before logging in.',
+      needsEmailConfirmation: true,
       data: {
         id: authData.user.id,
-        name: authData.user.user_metadata?.full_name || signupInput.name,
-        email: plainEmail,
-        phone: authData.user.user_metadata?.phone || '',
-        role: panel,
-        token: authData.session?.access_token,
-      },
-    });
-
-    const { name, email, password, phone } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide name, email, and password',
-      });
-    }
-
-    const cleanEmail = email.toLowerCase().trim();
-
-    // Check if user already exists in Supabase
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', cleanEmail)
-      .maybeSingle();
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists with this email address',
-      });
-    }
-
-    // Hash password with bcrypt
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Insert user into Supabase
-    const { data: newUser, error } = await supabase
-      .from('users')
-      .insert([
-        {
-          name,
-          email: cleanEmail,
-          password: hashedPassword,
-          phone: phone || '',
-          role: 'customer',
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('⚠️ Supabase User Insert Warning (Falling back to local cache):', error.message);
-      const fallbackUser = {
-        id: `u_${Date.now()}`,
         name,
-        email: cleanEmail,
-        password: hashedPassword,
-        phone: phone || '',
-        role: 'customer',
-      };
-
-      localUsers.push(fallbackUser);
-
-      return res.status(201).json({
-        success: true,
-        message: 'Account registered successfully! 🎉',
-        data: {
-          id: fallbackUser.id,
-          name: fallbackUser.name,
-          email: fallbackUser.email,
-          phone: fallbackUser.phone,
-          role: fallbackUser.role,
-          token: generateToken(fallbackUser.id),
-        },
-        source: 'local_fallback',
-      });
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Account created successfully in Supabase Cloud DB! 🎉',
-      data: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        phone: newUser.phone,
-        role: newUser.role,
-        token: generateToken(newUser.id),
+        email: plainEmail,
+        phone,
+        role: requestedRole,
+        token: null,
       },
-      source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('Signup server error:', error?.message || 'unknown error');
     res.status(500).json({
       success: false,
-      message: 'Server error during signup',
-      error: error.message,
+      message: error?.message || 'Account could not be created.',
     });
   }
 };
@@ -193,15 +78,15 @@ export const createStoreManager = async (req, res) => {
   try {
     const { name, email, phone, password, storeId } = req.body || {};
     const cleanEmail = normalizePanelEmail(email);
-    const authEmail = getPanelAuthEmail(cleanEmail, 'store_manager');
+    const authEmail = cleanEmail;
     const parsedStoreId = Number(storeId);
     const managerPassword = typeof password === 'string' ? password.trim() : '';
 
     if (!name?.trim() || !cleanEmail || !Number.isInteger(parsedStoreId)) {
       return res.status(400).json({ success: false, message: 'Name, email, and store are required.' });
     }
-    if (managerPassword && managerPassword.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+    if (managerPassword && managerPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
     }
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return res.status(503).json({
@@ -250,7 +135,6 @@ export const createStoreManager = async (req, res) => {
     const userMetadata = {
       full_name: name.trim(),
       phone: String(phone || '').trim(),
-      role: 'store_manager',
     };
     step = 'checking existing auth account';
     const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -262,18 +146,6 @@ export const createStoreManager = async (req, res) => {
     let userId;
     if (existingAuthUser) {
       step = 'updating existing auth account';
-      const { data: existingRole, error: existingRoleError } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', existingAuthUser.id)
-        .maybeSingle();
-      if (existingRoleError) throw existingRoleError;
-      if (existingRole && existingRole.role !== 'store_manager') {
-        return res.status(409).json({
-          success: false,
-          message: 'A different panel identity already uses this tagged email.',
-        });
-      }
       if (managerPassword) {
         const { error: passwordError } = await supabase.auth.admin.updateUserById(existingAuthUser.id, {
           password: managerPassword,
@@ -295,7 +167,7 @@ export const createStoreManager = async (req, res) => {
       });
       if (createError || !created?.user) {
         const dbHint = /database error|new user/i.test(createError?.message || '')
-          ? ' (Supabase trigger/constraint issue — run server/fix_panel_auth_roles.sql in the SQL Editor)'
+          ? ' (Supabase trigger/constraint issue)'
           : '';
         return res.status(400).json({ success: false, message: `${createError?.message || 'Manager account could not be created.'}${dbHint}` });
       }
@@ -307,8 +179,8 @@ export const createStoreManager = async (req, res) => {
       name: name.trim(),
       email: cleanEmail,
       phone: String(phone || '').trim(),
+      role: 'store_manager',
     };
-    if (!existingAuthUser) profilePayload.role = 'store_manager';
     step = 'saving manager profile';
     const { data: existingProfile, error: profileReadError } = await supabase
       .from('users')
@@ -321,12 +193,6 @@ export const createStoreManager = async (req, res) => {
       : supabase.from('users').insert(profilePayload);
     const { error: profileError } = await profileQuery;
     if (profileError) throw profileError;
-
-    step = 'saving manager role';
-    const { error: roleError } = await supabase
-      .from('user_roles')
-      .upsert({ user_id: userId, role: 'store_manager' }, { onConflict: 'user_id' });
-    if (roleError) throw roleError;
 
     step = 'linking manager to store';
     const { error: linkError } = await supabase
@@ -363,13 +229,13 @@ export const createStoreManager = async (req, res) => {
 // @access  Public
 export const loginUser = async (req, res) => {
   try {
-    const loginInput = req.body;
-    if (!loginInput.email || !loginInput.password) {
+    const loginInput = req.body || {};
+    const plainEmail = normalizePanelEmail(loginInput.email);
+    if (!plainEmail || !loginInput.password) {
       return res.status(400).json({ success: false, message: 'Please provide both email and password' });
     }
-
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: loginInput.email.toLowerCase().trim(),
+      email: plainEmail,
       password: loginInput.password,
     });
 
@@ -379,7 +245,6 @@ export const loginUser = async (req, res) => {
         message: authError?.message || 'Invalid email or password.',
       });
     }
-
     return res.status(200).json({
       success: true,
       message: 'Login successful!',
@@ -392,80 +257,11 @@ export const loginUser = async (req, res) => {
         token: authData.session.access_token,
       },
     });
-
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide both email and password',
-      });
-    }
-
-    const cleanEmail = email.toLowerCase().trim();
-
-    // Query user from Supabase
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', cleanEmail)
-      .maybeSingle();
-
-    if (error || !user) {
-      // Check fallback
-      const fallback = localUsers.find((u) => u.email === cleanEmail);
-      if (fallback) {
-        const isMatch = await bcrypt.compare(password, fallback.password);
-        if (isMatch) {
-          return res.status(200).json({
-            success: true,
-            message: 'Login successful! Welcome back 👋',
-            data: {
-              id: fallback.id,
-              name: fallback.name,
-              email: fallback.email,
-              phone: fallback.phone,
-              role: fallback.role,
-              token: generateToken(fallback.id),
-            },
-            source: 'local_fallback',
-          });
-        }
-      }
-
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password. Please check your credentials.',
-      });
-    }
-
-    // Verify bcrypt password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password. Please check your credentials.',
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Login successful! Welcome back 👋',
-      data: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        token: generateToken(user.id),
-      },
-      source: 'supabase_cloud_database',
-    });
   } catch (error) {
+    console.error('Panel login server error:', error?.message || 'unknown error');
     res.status(500).json({
       success: false,
-      message: 'Server error during login',
-      error: error.message,
+      message: error?.message || 'Login failed.',
     });
   }
 };
@@ -478,12 +274,7 @@ export const loginUser = async (req, res) => {
 export const forgotPassword = async (req, res) => {
   try {
     const plainEmail = normalizePanelEmail(req.body?.email);
-    const panel = req.body?.panel === 'delivery' ? 'delivery' : req.body?.panel === 'store_manager' ? 'store_manager' : 'customer';
-    if (panel === 'customer' && isReservedPanelEmail(plainEmail)) {
-      return res.status(400).json({ success: false, message: 'Please use your original email address.' });
-    }
-    const email = getPanelAuthEmail(plainEmail, panel);
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!plainEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(plainEmail)) {
       return res.status(400).json({
         success: false,
         message: 'Please provide a valid email address',
@@ -495,7 +286,7 @@ export const forgotPassword = async (req, res) => {
       process.env.PASSWORD_RESET_REDIRECT_URL ||
       undefined;
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await supabase.auth.resetPasswordForEmail(plainEmail, {
       ...(redirectTo ? { redirectTo } : {}),
     });
 

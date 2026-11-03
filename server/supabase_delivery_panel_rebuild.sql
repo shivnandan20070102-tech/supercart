@@ -36,6 +36,66 @@ CREATE INDEX IF NOT EXISTS idx_delivery_earnings_partner_created
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_otp_lock
   ON public.orders(delivery_boy_id, delivery_otp_locked_until);
 
+CREATE OR REPLACE FUNCTION public.validate_delivery_order_transition()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  flow TEXT[] := ARRAY['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'delivered'];
+  old_index INTEGER := array_position(flow, lower(replace(COALESCE(OLD.status, ''), '-', '_')));
+  new_index INTEGER := array_position(flow, lower(replace(COALESCE(NEW.status, ''), '-', '_')));
+BEGIN
+  IF auth.uid() IS NULL OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.delivery_boy_id::text = auth.uid()::text AND NEW.status IS DISTINCT FROM OLD.status THEN
+    IF lower(replace(COALESCE(NEW.status, ''), '-', '_')) = 'delivered' THEN
+      RAISE EXCEPTION 'Delivery must be completed through OTP verification';
+    END IF;
+    IF old_index IS NULL OR new_index IS NULL OR new_index <> old_index + 1 THEN
+      RAISE EXCEPTION 'Only the next delivery status is allowed';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_delivery_order_transition ON public.orders;
+CREATE TRIGGER validate_delivery_order_transition
+  BEFORE UPDATE ON public.orders
+  FOR EACH ROW EXECUTE FUNCTION public.validate_delivery_order_transition();
+
+CREATE OR REPLACE FUNCTION public.validate_delivery_location_write()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.id = auth.uid()
+     AND (NEW.current_lat IS DISTINCT FROM OLD.current_lat OR NEW.current_lng IS DISTINCT FROM OLD.current_lng)
+     AND NOT COALESCE(NEW.is_available, false)
+     AND NOT EXISTS (
+       SELECT 1 FROM public.orders
+       WHERE delivery_boy_id::text = auth.uid()::text
+         AND lower(replace(COALESCE(status, ''), '-', '_')) IN ('assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery')
+     ) THEN
+    RAISE EXCEPTION 'Location can be updated only while online or on an active delivery';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_delivery_location_write ON public.users;
+CREATE TRIGGER validate_delivery_location_write
+  BEFORE UPDATE ON public.users
+  FOR EACH ROW EXECUTE FUNCTION public.validate_delivery_location_write();
+
 CREATE OR REPLACE FUNCTION public.purge_old_delivery_locations()
 RETURNS VOID
 LANGUAGE sql
@@ -49,3 +109,18 @@ $$;
 
 REVOKE ALL ON FUNCTION public.purge_old_delivery_locations() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.purge_old_delivery_locations() TO service_role;
+
+-- Supabase projects with pg_cron enabled automatically purge stale GPS rows.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'cron') THEN
+    PERFORM cron.schedule(
+      'supercart-purge-old-delivery-locations',
+      '0 * * * *',
+      'SELECT public.purge_old_delivery_locations()'
+    );
+  END IF;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END;
+$$;
