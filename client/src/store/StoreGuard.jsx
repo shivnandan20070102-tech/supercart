@@ -19,10 +19,9 @@ export default function StoreGuard({ children }) {
       }
 
       const { data: profileRow } = await supabase
-        .from('user_roles')
+        .from('users')
         .select('role')
-        .eq('user_id', user.id)
-        .eq('role', 'store_manager')
+        .eq('id', user.id)
         .maybeSingle();
 
       if (!active) return;

@@ -18,14 +18,13 @@ export default function DeliveryGuard({ children }) {
       }
 
       const { data: profileRow } = await supabase
-        .from('user_roles')
+        .from('users')
         .select('role')
-        .eq('user_id', user.id)
-        .eq('role', 'delivery')
+        .eq('id', user.id)
         .maybeSingle();
 
       if (!active) return;
-      if (!profileRow) {
+      if (profileRow?.role !== 'delivery') {
         setState({ loading: false, allowed: false, redirect: '/delivery/login' });
         return;
       }

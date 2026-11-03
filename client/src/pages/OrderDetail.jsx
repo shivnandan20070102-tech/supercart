@@ -30,7 +30,7 @@ const OrderTrackingMap = React.lazy(() => import('../components/OrderTrackingMap
 // Jin status me delivery partner ke paas order hai — SIRF tabhi tracking
 // section dikhta hai. pending/pending_assignment/packed (bina partner) +
 // delivered/cancelled par section hidden rehta hai.
-const TRACKABLE_STATUSES = new Set(['assigned', 'accepted', 'picked_up', 'out_for_delivery']);
+const TRACKABLE_STATUSES = new Set(['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery']);
 import {
   arrivedAtTime,
   formatOrderPlaced,
@@ -120,6 +120,10 @@ const OrderDetail = () => {
   }, [order]);
   const statusKey = String(order?.status || '').toLowerCase();
   const showTracking = Boolean(riderId && TRACKABLE_STATUSES.has(statusKey));
+  const showDeliveryOtp = Boolean(
+    order?.delivery_otp &&
+    ['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer'].includes(statusKey),
+  );
 
   // Partner ka naam/phone lao (trackable hote hi).
   useEffect(() => {
@@ -307,6 +311,14 @@ const OrderDetail = () => {
       <div className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
         {invoiceError && (
           <p className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{invoiceError}</p>
+        )}
+
+        {showDeliveryOtp && (
+          <section aria-label="Delivery OTP" className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-xs font-black uppercase tracking-widest text-amber-700">Share this OTP at delivery</p>
+            <p className="mt-2 text-3xl font-black tracking-[0.35em] text-amber-900">{order.delivery_otp}</p>
+            <p className="mt-1 text-xs font-semibold text-amber-800">Do not share it before the delivery partner reaches you.</p>
+          </section>
         )}
 
         {/* Live delivery tracking — SIRF accepted/out_for_delivery (partner ke

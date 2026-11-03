@@ -1,6 +1,5 @@
 import { MOCK_PRODUCTS } from '../data/mockGroceryData';
 import { supabase } from '../config/supabase';
-import { getPanelAuthEmail } from '../utils/panelEmail';
 import { findNearestStore } from './nearestStore';
 import { decrementStockDirect } from './stock';
 import { calculateDeliveryCharge, isFreeDelivery } from '../config/store';
@@ -173,7 +172,7 @@ export const signupApi = async (userData) => {
 // 429 par fallback NAHI (block ka faisla final — friendly Hindi throw).
 export const forgotPasswordApi = async (email, redirectTo, panel = 'customer') => {
   const clean = String(email || '').trim();
-  const authEmail = getPanelAuthEmail(clean, panel);
+  const authEmail = clean;
   if (!clean) throw new Error('Please provide a valid email address');
   const urlsToTry = [`${API_BASE_URL}/api/auth/forgot-password`, `${API_BASE_URL}/forgot-password`];
   let lastNetworkError = null;

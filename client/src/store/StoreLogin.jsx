@@ -20,7 +20,7 @@ const StoreLogin = () => {
     const redirectIfManager = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !active) return;
-      const { data: profile } = await supabase.from('user_roles').select('role').eq('user_id', user.id).eq('role', 'store_manager').maybeSingle();
+      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
       const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);
       const storeIds = (links || []).map((link) => link.store_id).filter(Boolean);
       const { data: activeStores } = storeIds.length
@@ -49,7 +49,7 @@ const StoreLogin = () => {
     }
 
     const { data: { user } } = await supabase.auth.getUser();
-    const { data: profile } = await supabase.from('user_roles').select('role').eq('user_id', user.id).eq('role', 'store_manager').maybeSingle();
+    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
     const { data: links } = await supabase.from('store_staff').select('store_id').eq('user_id', user.id);
     const storeIds = (links || []).map((link) => link.store_id).filter(Boolean);
     const { data: activeStores } = storeIds.length

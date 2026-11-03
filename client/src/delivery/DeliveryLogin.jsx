@@ -76,6 +76,11 @@ const DeliveryLogin = () => {
       setLoading(false);
       return;
     }
+    if (isSignup && !/^[6-9]\d{9}$/.test(form.phone.trim())) {
+      setError('Enter a valid 10-digit Indian mobile number.');
+      setLoading(false);
+      return;
+    }
 
     const result = isSignup
       ? await signUpWithEmail({ ...form, role: 'delivery_partner' })
@@ -119,7 +124,7 @@ const DeliveryLogin = () => {
         {error && <p className="mb-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{error}</p>}
         {isSignup && <>
           <label className="block text-xs font-bold text-slate-600">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500" /></label>
-          <label className="mt-4 block text-xs font-bold text-slate-600">Phone<input required value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500" /></label>
+          <label className="mt-4 block text-xs font-bold text-slate-600">Phone<input type="tel" name="phone" autoComplete="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} required value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500" /></label>
         </>}
         <label className="mt-4 block text-xs font-bold text-slate-600">Email
           <span className="relative mt-1.5 block"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-white p-3 pl-10 text-sm outline-none focus:border-emerald-500" /></span>

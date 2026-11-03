@@ -5,7 +5,6 @@ import { supabase } from '../config/supabase';
 import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
 import { getDeliverySirenState, playDeliveryAlertSound, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
-import { DeliveryBottomNav } from './DeliveryPocket';
 
 // Map library भारी hai (~2MB) — sirf Delivery page par lazy load ho
 const DeliveryMap = React.lazy(() => import('./DeliveryMap'));
@@ -757,13 +756,15 @@ const DeliveryDashboard = () => {
     stopDeliverySiren();
     setUpdatingId(order.id);
     setError('');
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({ status: 'accepted' })
-      .eq('id', order.id)
-      .eq('delivery_boy_id', user.id);
-    if (updateError) {
-      setError(updateError.message);
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(`/api/orders/${order.id}/delivery-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ status: 'accepted' }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      setError(result?.message || 'Order could not be accepted.');
     } else {
       setPopupAlert(false);
       setPopupOrderId(null);
@@ -1222,15 +1223,19 @@ const DeliveryDashboard = () => {
       <nav aria-label="Delivery dashboard navigation" className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
         <div className="mx-auto grid max-w-2xl grid-cols-4 gap-1">
           {[
-            ['feed', 'Feed', Truck],
+            ['feed', 'Home', Truck],
             ['pocket', 'Pocket', Wallet],
-            ['gigs', 'Gigs', BriefcaseBusiness],
-            ['updates', 'Updates', Bell],
+            ['orders', 'Orders', ClipboardList],
+            ['profile', 'Profile', BriefcaseBusiness],
           ].map(([key, label, Icon]) => (
             <button
               key={key}
               type="button"
-              onClick={() => setActiveTab(key)}
+              onClick={() => {
+                if (key === 'pocket') navigate('/delivery/pocket');
+                else if (key === 'profile') navigate('/delivery/profile');
+                else setActiveTab(key === 'orders' ? 'feed' : key);
+              }}
               className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[11px] font-black transition ${activeTab === key ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
             >
               <Icon className="h-5 w-5" />
@@ -1286,7 +1291,6 @@ const DeliveryDashboard = () => {
           onTimeout={() => timeoutPopupOrder(popupOrder)}
         />
       )}
-      <DeliveryBottomNav active="home" />
     </div>
   );
 };

@@ -48,10 +48,9 @@ const Login = () => {
     let active = true;
     const redirectCustomer = async () => {
       const { data: profile, error } = await supabase
-        .from('user_roles')
+        .from('users')
         .select('role')
-        .eq('user_id', user.id)
-        .eq('role', 'customer')
+        .eq('id', user.id)
         .maybeSingle();
       if (!active) return;
       if (!error && profile?.role === 'customer') {

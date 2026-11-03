@@ -28,6 +28,10 @@ const DeliverySignup = () => {
       setError('Passwords do not match.');
       return;
     }
+    if (!/^[6-9]\d{9}$/.test(form.phone.trim())) {
+      setError('Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
     setLoading(true);
 
     const result = await signUpWithEmail({
@@ -90,7 +94,7 @@ const DeliverySignup = () => {
           <span className="relative block"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type="email" name="email" required value={form.email} onChange={updateField} className={`${inputClass} pl-10`} placeholder="you@example.com" /></span>
         </label>
         <label className="mt-4 block text-xs font-bold text-slate-300">Phone Number
-          <span className="relative block"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type="tel" name="phone" required value={form.phone} onChange={updateField} className={`${inputClass} pl-10`} placeholder="9876543210" /></span>
+          <span className="relative block"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type="tel" name="phone" autoComplete="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} required value={form.phone} onChange={updateField} className={`${inputClass} pl-10`} placeholder="9876543210" /></span>
         </label>
         <label className="mt-4 block text-xs font-bold text-slate-300">Password
           <span className="relative block"><LockKeyhole className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type={showPassword ? 'text' : 'password'} name="password" required minLength={6} value={form.password} onChange={updateField} className={`${inputClass} pl-10 pr-11`} placeholder="At least 6 characters" /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></span>
