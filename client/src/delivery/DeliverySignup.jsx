@@ -43,8 +43,11 @@ const DeliverySignup = () => {
     });
 
     if (!result.success) {
-      console.error('[DeliverySignup] signup failed:', { code: result.code, message: result.message });
-      setError(/already|exists|registered/i.test(result.message || '') ? 'Delivery identity pehle se bani hui hai. Login karo.' : (result.message || 'Account could not be created.'));
+      console.error('[DeliverySignup] signup failed:', { status: result.status, code: result.code, message: result.message, networkError: result.networkError });
+      // Show the REAL Supabase/backend error when available; never the silent
+      // 'Account could not be created.' fallback that hides the root cause.
+      const msg = result.message || result.networkError || 'Account could not be created.';
+      setError(/already|exists|registered/i.test(msg) ? 'Delivery identity pehle se bani hui hai. Login karo.' : msg);
       setLoading(false);
       return;
     }
@@ -56,17 +59,19 @@ const DeliverySignup = () => {
       return;
     }
 
-    const { error: profileError } = await supabase.from('delivery_profiles').upsert({
-      user_id: user.id,
-      name: form.name,
-      email: form.email,
-      phone: form.phone,
-      approval_status: 'pending',
-      profile_completed: false,
-    }, { onConflict: 'user_id' });
-    if (profileError) {
-      console.error('[DeliverySignup] Profile creation failed:', { code: profileError.code, message: profileError.message });
-      setError(profileError.message);
+    // The auth trigger (handle_new_auth_user) already created the pending
+    // delivery_profiles row during signup. Do NOT re-upsert approval fields
+    // here: that requires a UNIQUE(user_id) constraint and fights the
+    // protect_delivery_profile_status trigger. Just verify the row exists and
+    // let the profile-setup flow complete it.
+    const { error: profileReadError } = await supabase
+      .from('delivery_profiles')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (profileReadError && profileReadError.code !== 'PGRST116') {
+      console.error('[DeliverySignup] Profile read failed:', { code: profileReadError.code, message: profileReadError.message });
+      setError(profileReadError.message);
       setLoading(false);
       return;
     }

@@ -195,10 +195,21 @@ export const createStoreManager = async (req, res) => {
     const { error: profileError } = await profileQuery;
     if (profileError) throw profileError;
 
+    // Link manager to store without relying on a UNIQUE(store_id,user_id)
+    // constraint (which may be missing on live DB). Select-then-insert avoids
+    // the 'no unique or exclusion constraint matching ON CONFLICT' failure.
     step = 'linking manager to store';
-    const { error: linkError } = await supabase
+    const { data: existingLink, error: linkReadError } = await supabase
       .from('store_staff')
-      .upsert({ store_id: parsedStoreId, user_id: userId }, { onConflict: 'store_id,user_id' });
+      .select('store_id')
+      .eq('store_id', parsedStoreId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (linkReadError) throw linkReadError;
+    const { error: linkError } = existingLink
+      ? await supabase.from('store_staff').update({ store_id: parsedStoreId })
+          .eq('store_id', parsedStoreId).eq('user_id', userId)
+      : await supabase.from('store_staff').insert({ store_id: parsedStoreId, user_id: userId });
     if (linkError) throw linkError;
     if (!managerPassword) {
       step = 'sending password setup email';
