@@ -87,9 +87,13 @@ BEGIN
     WHERE coalesce(qual, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role'
        OR coalesce(with_check, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role'
     UNION ALL
-    -- triggers that reference the role-system helpers
+    -- triggers that reference the role-system helpers, excluding the two
+    -- triggers this script itself drops right after the guard
+    -- (sync_user_role_after_user_write, protect_user_role) so the guard does
+    -- not abort on its own cleanup.
     SELECT t.tgname FROM pg_trigger t
     WHERE NOT t.tgisinternal
+      AND t.tgname NOT IN ('sync_user_role_after_user_write', 'protect_user_role')
       AND (t.tgname IN ('sync_user_role_after_user_write', 'protect_user_role')
            OR pg_get_triggerdef(t.oid) ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role')
   ) refs;

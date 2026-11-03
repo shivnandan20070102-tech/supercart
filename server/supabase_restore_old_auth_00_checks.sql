@@ -69,8 +69,9 @@ WHERE coalesce(p.qual, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|s
    OR coalesce(p.with_check, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role';
 
 -- (vi continued) Triggers that reference the role-system helpers.
---      Expected during restore: zero rows (these are exactly the triggers the
---      restore drops: sync_user_role_after_user_write, protect_user_role).
+--      Expected during restore: the two triggers the restore drops WILL appear
+--      here — sync_user_role_after_user_write and protect_user_role. Any OTHER
+--      trigger appearing here needs review before running the restore.
 SELECT t.tgname,
        t.tgrelid::regclass AS on_table,
        pg_get_triggerdef(t.oid) AS definition
