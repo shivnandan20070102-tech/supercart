@@ -178,6 +178,7 @@ CREATE POLICY "Users can update own profile" ON public.users
   FOR UPDATE TO authenticated
   USING (id = auth.uid())
   WITH CHECK (id = auth.uid() AND role = public.current_user_role());
+DROP POLICY IF EXISTS "Admins manage users" ON public.users;
 CREATE POLICY "Admins manage users" ON public.users
   FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
 

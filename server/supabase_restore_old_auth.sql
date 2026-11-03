@@ -1,11 +1,14 @@
 -- ============================================================================
 -- SuperCart — RESTORE OLD AUTH (plain email / public.users.role)
 -- ============================================================================
--- Reverts the multi-role / tagged-email system (commits 6672aa6..b9e117b)
--- back to the working 5abbc1a model:
+-- Reverts the multi-role / tagged-email system back to the 5abbc1a model:
 --   * plain email, one normal Supabase account per email
 --   * supabase.auth.signUp() writes public.users via the trigger
 --   * role read from public.users.role
+--
+-- THIS FILE CONTAINS ONLY THE CHANGES, in one transaction. Read-only checks
+-- live in supabase_restore_old_auth_00_checks.sql — run those FIRST, before
+-- running this file.
 --
 -- SAFETY:
 --   * NO DELETE / TRUNCATE / DROP TABLE anywhere.
@@ -18,47 +21,11 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 1. READ-ONLY DUPLICATE CHECKS (run these first, before anything else)
+-- 1. RESTORE ORIGINAL SIGNUP TRIGGER / FUNCTION (exactly as at 5abbc1a)
 -- ---------------------------------------------------------------------------
--- These only report; they delete nothing. If any count is > 0, the matching
--- UNIQUE constraint below is SKIPPED (the app still works; the upsert that
--- needs the constraint may error until duplicates are resolved manually).
-DO $$
-DECLARE
-  n integer;
-BEGIN
-  SELECT count(*) INTO n FROM (
-    SELECT id FROM public.users GROUP BY id HAVING count(*) > 1
-  ) d;
-  RAISE NOTICE '[restore] users.id duplicate groups: %', n;
-END $$;
-
-DO $$
-DECLARE
-  n integer;
-BEGIN
-  SELECT count(*) INTO n FROM (
-    SELECT user_id FROM public.delivery_profiles GROUP BY user_id HAVING count(*) > 1
-  ) d;
-  RAISE NOTICE '[restore] delivery_profiles.user_id duplicate groups: %', n;
-END $$;
-
-DO $$
-DECLARE
-  n integer;
-BEGIN
-  IF to_regclass('public.store_staff') IS NOT NULL THEN
-    EXECUTE 'SELECT count(*) FROM (SELECT store_id, user_id FROM public.store_staff GROUP BY store_id, user_id HAVING count(*) > 1) d'
-      INTO n;
-    RAISE NOTICE '[restore] store_staff(store_id,user_id) duplicate groups: %', n;
-  END IF;
-END $$;
-
--- ---------------------------------------------------------------------------
--- 2. RESTORE ORIGINAL SIGNUP TRIGGER / FUNCTION (exactly as at 5abbc1a)
--- ---------------------------------------------------------------------------
--- Plain email. Role defaults to 'customer'. Metadata role is NOT consulted.
--- The trigger writes the new auth user into public.users keyed by auth user id.
+-- role comes from user metadata but only 'customer' | 'delivery' can ever be
+-- produced ('delivery_partner' -> 'delivery'); admin/store_manager metadata
+-- falls back to 'customer'. Delivery users get a pending delivery_profiles row.
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -66,14 +33,26 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    account_role TEXT := 'customer';
     account_name TEXT := COALESCE(NEW.raw_user_meta_data ->> 'full_name', split_part(NEW.email, '@', 1));
     account_phone TEXT := COALESCE(NEW.raw_user_meta_data ->> 'phone', '');
+    requested_role TEXT := COALESCE(NEW.raw_user_meta_data ->> 'role', 'customer');
 BEGIN
     INSERT INTO public.users (id, name, email, phone, role)
-    VALUES (NEW.id, account_name, NEW.email, account_phone, account_role)
-    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, role = EXCLUDED.role;
+    VALUES (
+      NEW.id,
+      account_name,
+      NEW.email,
+      account_phone,
+      CASE WHEN requested_role IN ('delivery', 'delivery_partner') THEN 'delivery' ELSE 'customer' END
+    )
+    ON CONFLICT (id) DO UPDATE
+      SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone;
 
+    IF requested_role IN ('delivery', 'delivery_partner') THEN
+      INSERT INTO public.delivery_profiles (user_id, name, email, phone, approval_status, profile_completed)
+      VALUES (NEW.id, account_name, NEW.email, account_phone, 'pending', false)
+      ON CONFLICT (user_id) DO NOTHING;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -83,58 +62,59 @@ CREATE TRIGGER on_auth_user_created_supercart
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
--- Read-only: verify what triggers currently sit on auth.users (tgname + function).
-SELECT t.tgname, p.proname AS function_name, t.tgenabled
-FROM pg_trigger t
-JOIN pg_proc p ON p.oid = t.tgfoid
-WHERE t.tgrelid = 'auth.users'::regclass
-  AND NOT t.tgisinternal
-ORDER BY t.tgname;
-
-UPDATE public.users
-SET role = 'customer'
-WHERE role IS NULL;
-
 -- ---------------------------------------------------------------------------
--- 3. REMOVE ROLE-SYSTEM-ONLY TRIGGERS / FUNCTIONS / POLICIES
+-- 2. REMOVE ROLE-SYSTEM-ONLY TRIGGERS / FUNCTIONS / POLICIES
 -- ---------------------------------------------------------------------------
--- These exist only in the tagged-email role system. Each is dropped with
--- IF EXISTS so the script is idempotent. Nothing else references them after
--- this block. Delivery objects are NOT touched here.
+-- 2a. GUARD: abort the whole transaction if ANY function (including is_admin
+--      / current_user_role), policy, or trigger still references the
+--      role-system helpers. No CASCADE is used anywhere; the guard is what
+--      prevents an accidental drop of something that is still in use.
+DO $$
+DECLARE
+  usage_count integer;
+BEGIN
+  SELECT count(*) INTO usage_count
+  FROM (
+    -- any public function whose body mentions the role-system helpers,
+    -- excluding the helpers themselves (the ones we are about to drop)
+    SELECT proname FROM pg_proc
+    WHERE pronamespace = 'public'::regnamespace
+      AND prosrc ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role|prevent_user_role_changes|prevent_client_role_changes'
+      AND proname NOT IN ('has_role','panel_from_auth_email','assign_panel_role','sync_user_role','prevent_user_role_changes','prevent_client_role_changes')
+    UNION ALL
+    -- policies that reference the role-system helpers
+    SELECT policyname FROM pg_policies
+    WHERE coalesce(qual, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role'
+       OR coalesce(with_check, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role'
+    UNION ALL
+    -- triggers that reference the role-system helpers
+    SELECT t.tgname FROM pg_trigger t
+    WHERE NOT t.tgisinternal
+      AND (t.tgname IN ('sync_user_role_after_user_write', 'protect_user_role')
+           OR pg_get_triggerdef(t.oid) ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role')
+  ) refs;
 
--- 3a. user_roles sync (from supabase_user_roles.sql)
+  IF usage_count > 0 THEN
+    RAISE EXCEPTION '[restore] Aborting: % object(s) still reference the role-system functions; review before proceeding.', usage_count;
+  END IF;
+END $$;
+
+-- 2b. user_roles sync (from supabase_user_roles.sql)
 DROP TRIGGER IF EXISTS sync_user_role_after_user_write ON public.users;
 DROP FUNCTION IF EXISTS public.sync_user_role();
 
--- 3b. role-protection trigger + guard functions (protect_user_role)
+-- 2c. role-protection trigger + guard functions
 DROP TRIGGER IF EXISTS protect_user_role ON public.users;
 DROP FUNCTION IF EXISTS public.prevent_user_role_changes();
 DROP FUNCTION IF EXISTS public.prevent_client_role_changes();
 
--- 3c. role helpers (from supabase_panel_identity_auth.sql / rebuild)
---
--- READ-ONLY usage check BEFORE dropping (no CASCADE): does any policy or
--- trigger still reference the role-system functions? If rows come back, review
--- them before continuing; nothing below forces a drop with CASCADE.
-SELECT p.schemaname, p.tablename, p.policyname,
-       NULLIF(p.qual, '') AS qual, NULLIF(p.with_check, '') AS with_check
-FROM pg_policies p
-WHERE coalesce(p.qual, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role'
-   OR coalesce(p.with_check, '') ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role';
-
-SELECT t.tgname,
-       t.tgrelid::regclass AS on_table,
-       pg_get_triggerdef(t.oid) AS definition
-FROM pg_trigger t
-WHERE NOT t.tgisinternal
-  AND (t.tgname IN ('sync_user_role_after_user_write', 'protect_user_role')
-       OR pg_get_triggerdef(t.oid) ~ 'has_role|panel_from_auth_email|assign_panel_role|sync_user_role');
-
+-- 2d. role helpers (from supabase_panel_identity_auth.sql / rebuild)
 DROP FUNCTION IF EXISTS public.has_role(uuid, text);
 DROP FUNCTION IF EXISTS public.assign_panel_role(uuid, text);
 DROP FUNCTION IF EXISTS public.panel_from_auth_email(text);
 
--- 3d. restore the original users RLS policies (5abbc1a)
+-- 2e. restore the original users RLS policies (exactly as at 5abbc1a:
+--      supabase_schema.sql + supabase_security_hardening.sql)
 DROP POLICY IF EXISTS "Admins manage users" ON public.users;
 DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
 DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
@@ -154,14 +134,14 @@ CREATE POLICY "Admins manage users" ON public.users
     WITH CHECK (public.is_admin());
 
 -- ---------------------------------------------------------------------------
--- 4. ENSURE THE UNIQUE CONSTRAINTS THE REMAINING UPSERTS NEED
+-- 3. ENSURE THE UNIQUE CONSTRAINTS THE REMAINING UPSERTS NEED
 -- ---------------------------------------------------------------------------
 -- Each upsert in the server code relies on one of these real keys:
 --   * users.id
 --   * delivery_profiles.user_id
---   * store_staff (store_id, user_id)   [already in the table definition]
--- If duplicates exist, the constraint for that table is SKIPPED (nothing is
--- deleted). The NOTICE above reports the duplicate count so you can fix it.
+--   * store_staff (store_id, user_id)
+-- If duplicates exist (see 00_checks), the constraint for that table is
+-- SKIPPED (nothing is deleted). The NOTICE reports the duplicate count.
 DO $$
 DECLARE
   duplicate_count integer;
@@ -243,24 +223,9 @@ BEGIN
   END IF;
 END $$;
 
--- ---------------------------------------------------------------------------
--- 5. READ-ONLY: STORE MANAGERS WITH NO store_staff LINK
--- ---------------------------------------------------------------------------
--- Shows which store_manager users have no store_staff row yet.
--- No INSERT here — re-linking is intentional and done by hand after you have
--- reviewed this list (id, email, name).
-SELECT m.id, m.email, m.name
-FROM public.users m
-WHERE lower(m.role) = 'store_manager'
-  AND NOT EXISTS (
-    SELECT 1 FROM public.store_staff st WHERE st.user_id = m.id
-  )
-ORDER BY m.name;
-
 COMMIT;
 
 -- ============================================================================
--- End of restore. Read-only verification queries (safe to run anytime):
---   SELECT id, email, role FROM public.users ORDER BY created_at DESC LIMIT 20;
---   SELECT * FROM public.store_staff;
+-- End of restore. After this, verify with the read-only queries in
+-- supabase_restore_old_auth_00_checks.sql (they are safe to run anytime).
 -- ============================================================================
