@@ -10,6 +10,8 @@ import {
   deliverOrderWithOtp,
   transitionDeliveryStatus,
   cancelOrder,
+  acceptOrderDelivery,
+  rejectOrderDelivery,
   reportDeliveryIssue,
   submitOrderReview,
   getRefundOrderList,
@@ -45,6 +47,9 @@ router.route('/:id/invoice').get(protect, generalLimiter, getOrderInvoice);
 router.route('/:id/status').put(protect, adminLooseLimiter, updateOrderStatus);
 router.route('/:id/deliver').post(protect, adminLooseLimiter, deliverOrderWithOtp);
 router.route('/:id/delivery-status').post(protect, adminLooseLimiter, transitionDeliveryStatus);
+// Delivery partner: accept / reject assigned order (server-side RPC, SECURITY DEFINER)
+router.route('/:id/accept').post(protect, adminLooseLimiter, acceptOrderDelivery);
+router.route('/:id/reject').post(protect, adminLooseLimiter, rejectOrderDelivery);
 router.route('/:id/send-invoice-email').post(protect, adminLooseLimiter, sendInvoiceEmailEndpoint);
 // Admin: cancelled / return_refund orders + reviews (specific paths BEFORE generic /:id)
 router.route('/admin/refunds').get(protect, adminLooseLimiter, getRefundOrderList);

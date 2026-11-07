@@ -759,10 +759,10 @@ const DeliveryDashboard = () => {
     setUpdatingId(order.id);
     setError('');
     const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/delivery-status`, {
+    const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-      body: JSON.stringify({ status: 'accepted' }),
+      body: JSON.stringify({}),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.success) {
@@ -785,13 +785,16 @@ const DeliveryDashboard = () => {
     stopDeliverySiren();
     setUpdatingId(order.id);
     try {
-      const current = Array.isArray(order.rejected_by) ? order.rejected_by.map(String) : [];
-      const updated = [...new Set([...current, String(user.id)])];
-      await supabase
-        .from('orders')
-        .update({ rejected_by: updated, delivery_boy_id: null, status: 'pending_assignment' })
-        .eq('id', order.id);
-      try { await supabase.rpc('retry_pending_assignments'); } catch (e) { /* best-effort */ }
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({}),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message || 'Could not reject the order.');
+      }
     } catch (e) { /* best-effort pass-on */ }
     setPopupAlert(false);
     setPopupOrderId(null);
@@ -811,15 +814,16 @@ const DeliveryDashboard = () => {
     stopDeliverySiren();
     setUpdatingId(order.id);
     try {
-      const current = Array.isArray(order.rejected_by) ? order.rejected_by.map(String) : [];
-      const updated = [...new Set([...current, String(user.id)])];
-      await supabase
-        .from('orders')
-        .update({ rejected_by: updated, delivery_boy_id: null, status: 'pending_assignment' })
-        .eq('id', order.id);
-      // Turant retry: saare pending orders available partners me baanto.
-      // Function na bana ho (migration pending) to silently skip — 30s worker backup hai.
-      try { await supabase.rpc('retry_pending_assignments'); } catch (e) { /* best-effort */ }
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({}),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message || 'Could not reject the order.');
+      }
     } catch (e) { /* best-effort pass-on */ }
     setPopupAlert(false);
     setPopupOrderId(null);
