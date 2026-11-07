@@ -1859,4 +1859,3 @@ export const adminOverrideDeliver = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Admin override failed', error: e.message });
   }
 };
-server/supabase_delivery_cod_otp_flow.sql
