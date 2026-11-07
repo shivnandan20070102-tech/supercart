@@ -50,6 +50,16 @@ const statusLine = (order) => {
   return prettyStatus(order);
 };
 
+// Part B: payment mode label — 'cash_on_delivery' -> "Cash on Delivery",
+// online ('paid') -> "Paid online", baaki raw value fallback.
+const paymentLabel = (order) => {
+  const m = String(order?.payment_method || order?.paymentMethod || '').toLowerCase();
+  if (m === 'cash_on_delivery' || m === 'cod' || m === 'cash') return 'Cash on Delivery';
+  if (m === 'paid') return 'Paid online';
+  if (m) return order.payment_method || order.paymentMethod;
+  return 'Cash on Delivery';
+};
+
 const OrderHistory = () => {
   const { user, loading } = useAuth();
   const { addToCart } = useCart();
@@ -239,6 +249,9 @@ const OrderHistory = () => {
                       </p>
                       <p className="mt-0.5 text-xs font-medium text-slate-500">
                         ₹{total} <span className="mx-1 text-slate-300">•</span> {date}
+                      </p>
+                      <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-black text-emerald-700">
+                        {paymentLabel(order)}
                       </p>
                       {isTrackable(order) && (
                         <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-700">

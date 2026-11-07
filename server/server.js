@@ -6,6 +6,7 @@ import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import complaintRoutes from './routes/complaintRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { optionalAuth, protect } from './middleware/authMiddleware.js';
 import {
@@ -134,6 +135,7 @@ app.use('/api/products', generalLimiter, productRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/complaints', complaintRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Global Error Handlers
 app.use(notFound);

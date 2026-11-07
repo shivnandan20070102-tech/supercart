@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -46,11 +46,15 @@ const normalizeInstructions = (value) => {
 };
 
 // Accept ke baad ka step flow (sirf agla step enabled rehta hai)
+// Part A: Accepted -> Picked up -> Out for delivery -> Payment -> OTP -> Delivered
+// 'payment' aur 'otp' real DB status nahi hain — ye deliverables ke beech ke
+// gate hain (dono tabhi complete hote hain jab payment collected + OTP verified).
 const FLOW = [
   { key: 'accepted', label: 'Accepted' },
-  { key: 'reached_store', label: 'Reached Store' },
   { key: 'picked_up', label: 'Picked Up' },
-  { key: 'reached_customer', label: 'Reached Customer' },
+  { key: 'out_for_delivery', label: 'Out for Delivery' },
+  { key: 'payment', label: 'Payment' },
+  { key: 'otp', label: 'OTP' },
   { key: 'delivered', label: 'Delivered' },
 ];
 
@@ -66,6 +70,77 @@ const REVIEW_TAG_OPTIONS = [
 
 const prettifyStatus = (status) =>
   String(status || 'Placed').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+// ---- Slide-to-confirm slider (touch + mouse) ----
+// Use is right side tak kheenchna padta hai. Beech me chhodne par wapas
+// spring-back hota hai (release pe 0). Complete hone par onConfirm() call.
+const ChevronRight = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+);
+
+const SlideToConfirm = ({ onConfirm, disabled, children, busyLabel }) => {
+  const trackRef = useRef(null);
+  const [progress, setProgress] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const posFromClientX = (clientX) => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    const max = rect.width - 56;
+    if (max <= 0) return 0;
+    const pct = (clientX - rect.left - 28) / max;
+    return Math.max(0, Math.min(1, pct));
+  };
+
+  const onMove = (clientX) => setProgress(posFromClientX(clientX));
+
+  const onEnd = (clientX) => {
+    setDragging(false);
+    if (posFromClientX(clientX) >= 0.9 && !disabled) {
+      setDone(true);
+      setProgress(1);
+      onConfirm?.();
+      setTimeout(() => { setDone(false); setProgress(0); }, 1000);
+    } else {
+      setProgress(0);
+    }
+  };
+
+  const knobLeft = Math.round(progress * 100);
+
+  return (
+    <div
+      ref={trackRef}
+      className={`relative h-[56px] w-full cursor-grab select-none overflow-hidden rounded-2xl transition ${disabled ? 'bg-slate-800/60' : 'bg-slate-800 active:cursor-grabbing'}`}
+      style={{ touchAction: 'none' }}
+      onTouchStart={(e) => { if (!disabled) { setDragging(true); onMove(e.touches[0].clientX); } }}
+      onTouchMove={(e) => { if (dragging) onMove(e.touches[0].clientX); }}
+      onTouchEnd={(e) => { if (dragging) onEnd(e.changedTouches[0].clientX); }}
+      onMouseDown={(e) => { if (!disabled) { setDragging(true); onMove(e.clientX); } }}
+      onMouseMove={(e) => { if (dragging) onMove(e.clientX); }}
+      onMouseUp={(e) => { if (dragging) onEnd(e.clientX); }}
+      onMouseLeave={() => { if (dragging) { setDragging(false); setProgress(0); } }}
+    >
+      <div
+        className={`absolute inset-y-0 left-0 rounded-2xl ${disabled ? 'bg-slate-700' : 'bg-emerald-500'} ${dragging ? '' : 'transition-[width] duration-150'}`}
+        style={{ width: `${knobLeft}%` }}
+      />
+      <div className={`absolute inset-0 flex items-center justify-center gap-2 text-sm font-black ${disabled ? 'text-slate-500' : 'text-slate-950'}`}>
+        {done ? busyLabel || 'Done ✓' : children}
+      </div>
+      <div
+        className={`absolute top-1 flex h-12 w-12 items-center justify-center rounded-xl shadow-lg ${dragging ? '' : 'transition-[left] duration-150'}`}
+        style={{ left: `calc(${knobLeft}% - 8px)` }}
+      >
+        <span className={`flex h-12 w-12 items-center justify-center rounded-xl ${disabled ? 'bg-slate-600 text-slate-400' : 'bg-slate-950 text-emerald-300'}`}>
+          <ChevronRight className="h-6 w-6" />
+        </span>
+      </div>
+    </div>
+  );
+};
 
 const DeliveryOrderDetail = () => {
   const { id } = useParams();
@@ -165,28 +240,39 @@ const DeliveryOrderDetail = () => {
     return () => { supabase.removeChannel(channel); };
   }, [id, user, loadOrder]);
 
-  const updateStatus = async (status) => {
+  // Part A: advance-step (forward-only) — assigned partner, server-side guard
+  const advanceStep = async (target) => {
     if (!order || updating) return;
-    // Scope guard: doosre rider / unassigned order ka status mat badlo.
-    const scopeOk = isOrderInScope(order, {
-      userId: user?.id,
-      homeStoreId,
-      assignedStoreIds: order?.store_id != null ? [Number(order.store_id)] : undefined,
-    });
-    if (!scopeOk) {
-      setError('This order is outside your assigned/home store scope.');
-      return;
-    }
     setUpdating(true);
     setError('');
     const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(`/api/orders/${order.id}/delivery-status`, {
+    const response = await fetch(`/api/orders/${order.id}/advance-step`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ step: target }),
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok || !result?.success) setError(result?.message || 'Status update failed.');
+    if (!response.ok || !result?.success) setError(result?.message || 'Could not update delivery step.');
+    else {
+      await loadOrder(user.id);
+      if (target === 'delivered') triggerDeliveredInvoiceEmail(order.id);
+    }
+    setUpdating(false);
+  };
+
+  // Part A: partner confirms cash collected (amount comes from server total)
+  const collectPayment = async () => {
+    if (!order || updating) return;
+    setUpdating(true);
+    setError('');
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(`/api/orders/${order.id}/collect-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({}),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) setError(result?.message || 'Could not collect payment.');
     else await loadOrder(user.id);
     setUpdating(false);
   };
@@ -196,18 +282,18 @@ const DeliveryOrderDetail = () => {
     setOtpError('');
     setUpdating(true);
     const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(`/api/orders/${order.id}/deliver`, {
+    // verify-otp sirf OTP verify karta hai (deliver alag step hai)
+    const response = await fetch(`/api/orders/${order.id}/verify-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
       body: JSON.stringify({ otp }),
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok || !result?.success) setOtpError(result?.message || 'Could not complete delivery.');
+    if (!response.ok || !result?.success) setOtpError(result?.message || 'Could not verify OTP.');
     else {
       setOtpOpen(false);
       setOtp('');
       await loadOrder(user.id);
-      triggerDeliveredInvoiceEmail(order.id);
     }
     setUpdating(false);
   };
@@ -308,8 +394,14 @@ const DeliveryOrderDetail = () => {
   const paymentMethod = order?.payment_method || 'Cash On Delivery';
   const isCOD = /cash/i.test(paymentMethod);
   const rawStatusKey = String(order?.status || '').toLowerCase();
-  const statusKey = rawStatusKey === 'out_for_delivery' ? 'reached_customer' : rawStatusKey;
+  // Legacy (purana) statuses ko naye flow me map karo — forward progress safe.
+  const LEGACY_MAP = { reached_store: 'accepted', reached_customer: 'out_for_delivery' };
+  const statusKey = LEGACY_MAP[rawStatusKey] || rawStatusKey;
   const stepIndex = FLOW.findIndex((s) => s.key === statusKey);
+  // Payment / OTP gates (deliver ke liye dono zaroori)
+  const paymentCollected =
+    !!order?.payment_collected || String(order?.payment_status || '').toLowerCase() === 'paid';
+  const otpVerified = !!order?.otp_verified_at;
   // SCOPE GUARD: Navigate/map sirf apne assigned + home/assigned-store context me.
   // Kisi doosre rider ka order ya unassigned order khul jaye to Navigate mat do.
   // Fallback assignment (store home se alag, par mujhe assigned) allowed hai.
@@ -473,12 +565,30 @@ const DeliveryOrderDetail = () => {
               {isCOD ? paymentMethod : 'Paid Online'}
             </p>
             {!isCOD && <p className="mt-1.5 text-xs font-bold text-slate-400">{paymentMethod}</p>}
-            {isCOD && (
-              <p className="mt-2 text-3xl font-black tracking-tight text-amber-300">
-                Collect ₹{order?.total_price ?? 0}
-              </p>
+            {isCOD ? (
+              paymentCollected ? (
+                <p className="mt-2 inline-flex items-center gap-2 text-2xl font-black text-emerald-300">
+                  <Check className="h-6 w-6" /> Cash received {order?.collected_amount != null ? `₹${order.collected_amount}` : ''}
+                </p>
+              ) : (
+                <p className="mt-2 text-3xl font-black tracking-tight text-amber-300">
+                  Collect ₹{order?.total_price ?? 0}
+                </p>
+              )
+            ) : (
+              <p className="mt-2 text-2xl font-black text-emerald-300">Paid online</p>
             )}
           </div>
+          {(isCOD && !paymentCollected && ['picked_up', 'out_for_delivery', 'accepted', 'assigned'].includes(statusKey)) && (
+            <div className="mt-4">
+              <SlideToConfirm onConfirm={collectPayment} disabled={updating} busyLabel="Collecting…">
+                <Wallet className="h-5 w-5" /> Slip to confirm cash ₹{order?.total_price ?? 0}
+              </SlideToConfirm>
+              <p className="mt-2 text-center text-[11px] font-bold text-slate-500">
+                Cash tabhi confirm karo jab customer se paisa mil jaye
+              </p>
+            </div>
+          )}
           <div className="mt-3 space-y-1.5 border-t border-slate-800 pt-3 text-xs text-slate-400">
             {order?.items_price != null && <div className="flex justify-between"><span>Items price</span><span>₹{order.items_price}</span></div>}
             {order?.delivery_fee != null && <div className="flex justify-between"><span>Delivery fee</span><span>₹{order.delivery_fee}</span></div>}
@@ -512,48 +622,45 @@ const DeliveryOrderDetail = () => {
           </div>
           <div className="mt-4 space-y-2">
             {statusKey === 'assigned' && (
-              <button
-                type="button"
-                onClick={() => updateStatus('accepted')}
-                disabled={updating}
-                className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-sm font-black text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
-              >
-                <Check className="h-5 w-5" /> Accept Order
-              </button>
+              <SlideToConfirm onConfirm={() => advanceStep('accepted')} disabled={updating} busyLabel="Accepting…">
+                <Check className="h-5 w-5" /> Slide to Accept Order
+              </SlideToConfirm>
             )}
-            {[
-              { key: 'reached_store', label: 'Reached Store', icon: MapPin },
-              { key: 'picked_up', label: 'Picked Up', icon: Package },
-              { key: 'reached_customer', label: 'Reached Customer', icon: Truck },
-            ].map(({ key, label, icon: Icon }) => {
-              const targetIdx = FLOW.findIndex((s) => s.key === key);
-              const isNext = stepIndex === targetIdx - 1;
-              const isDone = stepIndex >= targetIdx;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => updateStatus(key)}
-                  disabled={!isNext || updating}
-                  className={`flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl text-sm font-black transition active:scale-[0.99] disabled:cursor-not-allowed ${
-                    isNext
-                      ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
-                      : isDone
-                        ? 'bg-slate-800 text-emerald-300/70'
-                        : 'bg-slate-800/50 text-slate-600'
-                  }`}
-                >
-                  {isDone && !isNext ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
-                  {updating && isNext ? 'Updating...' : label}
-                </button>
-              );
-            })}
-            {statusKey === 'reached_customer' && (
-              <button type="button" onClick={() => { setOtpOpen(true); setOtpError(''); }} disabled={updating} className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-sm font-black text-slate-950">
-                <Check className="h-5 w-5" /> Verify OTP & Deliver
-              </button>
+            {statusKey === 'accepted' && (
+              <SlideToConfirm onConfirm={() => advanceStep('picked_up')} disabled={updating} busyLabel="Updating…">
+                <Package className="h-5 w-5" /> Slide to confirm Picked Up
+              </SlideToConfirm>
             )}
-            {(statusKey === 'picked_up' || statusKey === 'reached_customer') && (
+            {statusKey === 'picked_up' && (
+              <SlideToConfirm onConfirm={() => advanceStep('out_for_delivery')} disabled={updating} busyLabel="Updating…">
+                <Truck className="h-5 w-5" /> Slide to start Out for Delivery
+              </SlideToConfirm>
+            )}
+            {statusKey === 'out_for_delivery' && (
+              <>
+                {!paymentCollected && isCOD && (
+                  <p className="rounded-xl bg-amber-950/40 p-3 text-xs font-bold text-amber-300">
+                    Pehle upar se cash collect karo (Slip to confirm cash).
+                  </p>
+                )}
+                {!otpVerified && (
+                  <button
+                    type="button"
+                    onClick={() => { setOtpOpen(true); setOtpError(''); }}
+                    disabled={updating}
+                    className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-slate-800 text-sm font-black text-white transition hover:bg-slate-700 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <ShieldCheck className="h-5 w-5 text-emerald-400" /> Enter Customer OTP
+                  </button>
+                )}
+                {paymentCollected && otpVerified && (
+                  <SlideToConfirm onConfirm={() => advanceStep('delivered')} disabled={updating} busyLabel="Delivering…">
+                    <Check className="h-5 w-5" /> Slide to Deliver
+                  </SlideToConfirm>
+                )}
+              </>
+            )}
+            {['picked_up', 'out_for_delivery'].includes(statusKey) && (
               <button
                 type="button"
                 onClick={() => { setIssueOpen(true); setIssueReason(''); setIssueError(''); }}
@@ -573,7 +680,7 @@ const DeliveryOrderDetail = () => {
             <p className="mt-1 text-sm text-slate-400">Ask the customer for the 4-digit OTP.</p>
             <input autoFocus inputMode="numeric" maxLength={4} pattern="\d{4}" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} className="mt-5 w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-center text-3xl font-black tracking-[0.5em] text-white outline-none focus:border-emerald-500" />
             {otpError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{otpError}</p>}
-            <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setOtpOpen(false)} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button><button type="submit" disabled={otp.length !== 4 || updating} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-50">{updating ? 'Checking...' : 'Deliver'}</button></div>
+            <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setOtpOpen(false)} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button><button type="submit" disabled={otp.length !== 4 || updating} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-50">{updating ? 'Checking...' : 'Verify'}</button></div>
           </form>
         </div>
       )}

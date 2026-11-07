@@ -3,6 +3,7 @@ import { getShippingCoords, resolveOrderStore, calculateDeliveryCharge, calculat
 import { releaseStockReservation, reserveStockForOrder, normalizeStockItems } from '../utils/stock.js';
 import { barcodesMatch, itemProductId } from '../utils/barcodeMatch.js';
 import crypto from 'node:crypto';
+import { ONLINE_PAYMENTS_ENABLED } from '../services/paymentService.js';
 
 const isValidUUID = (val) => {
   if (!val || typeof val !== 'string') return false;
@@ -80,7 +81,25 @@ const REVIEW_TAGS = new Set([
 ]);
 
 const normalizePaymentMethod = (val) => String(val || '').trim().toLowerCase();
-const isCashOnDelivery = (method) => normalizePaymentMethod(method).includes('cash');
+const isCashOnDelivery = (method) =>
+  ['cod', 'cash', 'cash_on_delivery'].includes(normalizePaymentMethod(method));
+
+// Canonical payment_method value map (Part B)
+const PAYMENT_METHOD_ALIASES = {
+  cod: 'cash_on_delivery',
+  cash: 'cash_on_delivery',
+  cash_on_delivery: 'cash_on_delivery',
+  upi: 'upi',
+  phonepe: 'phonepe',
+  gpay: 'google_pay',
+  google_pay: 'google_pay',
+  card: 'card',
+  debit_credit_card: 'card',
+  debit_card: 'card',
+  credit_card: 'card',
+};
+const canonicalPaymentMethod = (val) =>
+  PAYMENT_METHOD_ALIASES[normalizePaymentMethod(val)] || 'cash_on_delivery';
 
 // Refund rule: COD -> hamesha 'none'. Non-COD -> koi real gateway nahi hai,
 // isliye 'pending' + amount (kabhi auto-refund nahi / kabhi paisa wapas nahi).
@@ -247,6 +266,19 @@ export const createOrder = async (req, res) => {
     const clientCouponCode = String(couponCode || coupon_code || '').trim().toUpperCase() || null;
     const clientTotalPrice = Number(totalPrice ?? total_price ?? 0) || 0;
     const clientTip = Math.max(0, Number(tipAmount ?? tip_amount ?? 0) || 0);
+
+    // ---- Payment method validation (Part B) ----
+    // ONLINE_PAYMENTS_ENABLED=false hone par online methods reject (sirf cod).
+    // Canonical value store hota hai (cash_on_delivery/upi/phonepe/...).
+    const canonicalPay = canonicalPaymentMethod(finalPaymentMethod);
+    const isCashPay = canonicalPay === 'cash_on_delivery';
+    if (!isCashPay && !ONLINE_PAYMENTS_ENABLED) {
+      return res.status(400).json({
+        success: false,
+        message: 'Online payment is not available yet. Please use Cash on Delivery.',
+        code: 'ONLINE_PAYMENTS_DISABLED',
+      });
+    }
 
     // Multi-store: order ka store_id WAHI jo nearest ACTIVE store hai.
     // Client fresh-resolve karke bhejta hai, authoritative check yahan hota hai —
@@ -484,7 +516,8 @@ export const createOrder = async (req, res) => {
       ...(finalStoreId != null ? { store_id: finalStoreId } : {}),
       order_items: finalItems,
       shipping_address: finalShipping,
-      payment_method: finalPaymentMethod,
+      payment_method: canonicalPay,
+      payment_status: isCashPay ? 'pending' : 'paid',
       items_price: finalItemsPrice,
       delivery_fee: finalDeliveryFee,
       coupon_discount: finalCouponDiscount,
@@ -492,8 +525,6 @@ export const createOrder = async (req, res) => {
       delivery_instructions: finalInstructions,
       tip_amount: finalTipAmount,
       total_price: finalTotalPrice,
-      delivery_otp: String(crypto.randomInt(0, 10000)).padStart(4, '0'),
-      delivery_otp_attempts: 0,
       delivery_distance_km: serverDistanceKm ?? 0,
       // Koi partner available na ho to yehi status rehta hai —
       // 30s worker / Realtime listener baad me auto-assign karega.
@@ -1626,6 +1657,158 @@ export const getReviewsList = async (req, res) => {
     return res.status(200).json({ success: true, count: all.length, averageRating: Math.round(avg * 100) / 100, data: all });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error fetching reviews', error: error.message });
+  }
+};
+
+// =====================================================================
+// Part A — Delivery step / COD / OTP (server-side, SECURITY DEFINER RPC)
+// =====================================================================
+// Ye saare RPC secure functions ko call karte hain (supabase_delivery_cod_
+// otp_flow.sql). Server service-role se call karta hai; function khud owner/
+// partner checks karta hai. Client se seedha payment/status UPDATE block hai
+// (RLS + trigger) — isliye ye hi order aage badhane ke raaste hain.
+
+// RPC ke default error ko friendly message me badlo (migration pending ho to)
+const rpcError = (error, fallback) => {
+  const msg = String(error?.message || '');
+  if (/does not exist|schema cache|function.*not found/i.test(msg)) {
+    return {
+      status: 500,
+      json: {
+        success: false,
+        message: `${fallback} — Run server/supabase_delivery_cod_otp_flow.sql in Supabase SQL Editor first.`,
+      },
+    };
+  }
+  return { status: 500, json: { success: false, message: msg || fallback } };
+};
+
+// @desc    Advance delivery step (forward-only + Delivered payment/OTP gate)
+// @route   POST /api/orders/:id/advance-step  { step }
+// @access  Private (assigned partner)
+export const advanceOrderStep = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const step = String(req.body?.step || req.body?.status || '').trim();
+    if (!step) return res.status(400).json({ success: false, message: 'Step is required' });
+
+    const { data, error } = await supabase.rpc('advance_order_step', {
+      p_order_id: Number(id),
+      p_partner_id: req.user?.id,
+      p_target: step,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not advance the order step.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(400).json({ success: false, message: data?.message || 'Step not allowed.' });
+    }
+    return res.status(200).json({ success: true, message: 'Step updated.', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error advancing order step', error: e.message });
+  }
+};
+
+// @desc    Partner confirms cash collected (collected_amount from total)
+// @route   POST /api/orders/:id/collect-payment
+// @access  Private (assigned partner)
+export const collectCashPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase.rpc('collect_order_payment', {
+      p_order_id: Number(id),
+      p_partner_id: req.user?.id,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not collect payment.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(400).json({ success: false, message: data?.message || 'Could not collect payment.' });
+    }
+    return res.status(200).json({ success: true, message: 'Cash received.', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error collecting payment', error: e.message });
+  }
+};
+
+// @desc    Partner verifies customer 4-digit OTP (server-side, lock on 5)
+// @route   POST /api/orders/:id/verify-otp  { otp }
+// @access  Private (assigned partner)
+export const verifyOrderOtp = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const otp = String(req.body?.otp || '').replace(/\D/g, '');
+    const { data, error } = await supabase.rpc('verify_order_otp', {
+      p_order_id: Number(id),
+      p_partner_id: req.user?.id,
+      p_otp: otp,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not verify OTP.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(400).json({ success: false, message: data?.message || 'OTP verification failed.' });
+    }
+    return res.status(200).json({ success: true, message: data.message || 'OTP verified.', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error verifying OTP', error: e.message });
+  }
+};
+
+// @desc    Customer (owner) ya admin ko OTP dikhao (hash se fresh code)
+// @route   GET /api/orders/:id/otp
+// @access  Private (order owner / admin)
+export const getCustomerOtp = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase.rpc('get_customer_otp', {
+      p_order_id: Number(id),
+      p_user_id: req.user?.id,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not fetch OTP.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(403).json({ success: false, message: data?.message || 'Not authorized to view this OTP.' });
+    }
+    return res.status(200).json({ success: true, otp: data.otp, order_status: data.order_status });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error fetching OTP', error: e.message });
+  }
+};
+
+// @desc    Admin override: delivered bina OTP (reason mandatory + audit log)
+// @route   POST /api/orders/:id/admin-deliver-override  { reason }
+// @access  Private (admin only)
+export const adminOverrideDeliver = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reason = String(req.body?.reason || '').trim();
+    const { data, error } = await supabase.rpc('admin_override_deliver', {
+      p_order_id: Number(id),
+      p_admin_id: req.user?.id,
+      p_reason: reason,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Admin override failed.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      const status = /Admin access/.test(data?.message || '') ? 403 : 400;
+      return res.status(status).json({ success: false, message: data?.message || 'Admin override failed.' });
+    }
+    return res.status(200).json({ success: true, message: 'Order marked delivered (admin override).', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Admin override failed', error: e.message });
   }
 };
 
