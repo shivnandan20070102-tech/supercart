@@ -111,10 +111,15 @@ const OrderDetail = () => {
   }, [order]);
   const statusKey = String(order?.status || '').toLowerCase();
   const showTracking = Boolean(riderId && TRACKABLE_STATUSES.has(statusKey));
-  // Part A: OTP sirf tab dikhaye ja jab order 'out_for_delivery' ho,
-  // ore sirf customer ko (backend ownership check bhi karta hai). Server
-  // se fresh code laate hain — plain code kahin stored nahi.
-  const showDeliveryOtp = statusKey === 'out_for_delivery';
+  // Part A: OTP order placed hote hi dikhao (delivery boy ko dene ke liye) —
+  // sirf active orders par; delivered/cancelled/return par hidden. Backend
+  // ownership check bhi karta hai. Server se fresh code laate hain — plain
+  // code kahin stored nahi.
+  const showDeliveryOtp =
+    !!user &&
+    statusKey !== 'delivered' &&
+    statusKey !== 'cancelled' &&
+    statusKey !== 'return_refund';
 
   // Partner ka naam/phone lao (trackable hote hi).
   useEffect(() => {
@@ -161,9 +166,9 @@ const OrderDetail = () => {
     };
   }, [id]);
 
-  // Part A: jab order out_for_delivery ho, customer ke liye server-side OTP
-  // fetch karo (sirf owner/admin ko milta hai — backend RLS + SECURITY
-  // DEFINER se guard). Fresh code har baar generate hota hai.
+  // Part A: OTP customer ko order placed hote hi dikhao (delivery boy ko dene
+  // ke liye) — sirf owner/admin ko milta hai (backend RLS + SECURITY DEFINER
+  // se guard). Fresh code har baar generate hota hai.
   useEffect(() => {
     if (!showDeliveryOtp || !user || !id) {
       setOtpCode('');

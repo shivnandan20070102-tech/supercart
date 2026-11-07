@@ -36,18 +36,33 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ============================================================================
 -- 1. orders — COD / OTP columns (existing orders ko touch nahi karta)
 -- ============================================================================
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS payment_collected BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS collected_amount NUMERIC;
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS collected_at TIMESTAMPTZ;
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS collected_by UUID;
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS otp_verified_at TIMESTAMPTZ;
-ALTER TABLE public.orders
-    ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'pending';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'payment_collected') THEN
+        ALTER TABLE public.orders ADD COLUMN payment_collected BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'collected_amount') THEN
+        ALTER TABLE public.orders ADD COLUMN collected_amount NUMERIC;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'collected_at') THEN
+        ALTER TABLE public.orders ADD COLUMN collected_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'collected_by') THEN
+        ALTER TABLE public.orders ADD COLUMN collected_by UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'otp_verified_at') THEN
+        ALTER TABLE public.orders ADD COLUMN otp_verified_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'payment_status') THEN
+        ALTER TABLE public.orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'pending';
+    END IF;
+END $$;
 
 -- Existing rows: agar purana order already paid/COD ho to payment_status pa
 -- default 'pending' pe hoga — jo sahi hai (still to collect). Online/paid
@@ -353,9 +368,10 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Not authorized to view this OTP');
     END IF;
 
-    -- Sirf jab order out_for_delivery (ya aage, delivered se pehle) ho
-    IF public.norm_status(o.status) NOT IN ('out_for_delivery', 'picked_up', 'accepted', 'assigned') THEN
-        RETURN jsonb_build_object('success', false, 'message', 'OTP available only when the order is out for delivery');
+    -- OTP order placed hote hi bana do (delivery boy ko dene ke liye) —
+    -- sirf terminal orders (delivered/cancelled/return) par nahi.
+    IF public.norm_status(o.status) IN ('delivered', 'cancelled', 'return_refund') THEN
+        RETURN jsonb_build_object('success', false, 'message', 'OTP is not available for this order');
     END IF;
 
     -- Fresh code generate + hash store (purana invalid hota hai — sahi hai)
