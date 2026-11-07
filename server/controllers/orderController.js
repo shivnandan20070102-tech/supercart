@@ -694,6 +694,54 @@ export const transitionDeliveryStatus = async (req, res) => {
   }
 };
 
+// @desc    Partner accepts an assigned order (server-side RPC, SECURITY DEFINER)
+// @route   POST /api/orders/:id/accept
+// @access  Private (assigned partner only)
+export const acceptOrderDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase.rpc('accept_order', {
+      p_order_id: Number(id),
+      p_partner_id: req.user?.id,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not accept the order.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(400).json({ success: false, message: data?.message || 'Order could not be accepted.' });
+    }
+    return res.status(200).json({ success: true, message: 'Order accepted.', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error accepting order', error: e.message });
+  }
+};
+
+// @desc    Partner rejects an assigned order (returns to pending_assignment, status)
+// @route   POST /api/orders/:id/reject
+// @access  Private (assigned partner only)
+export const rejectOrderDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase.rpc('reject_order', {
+      p_order_id: Number(id),
+      p_partner_id: req.user?.id,
+    });
+
+    if (error) {
+      const { status, json } = rpcError(error, 'Could not reject the order.');
+      return res.status(status).json(json);
+    }
+    if (!data?.success) {
+      return res.status(400).json({ success: false, message: data?.message || 'Could not reject the order.' });
+    }
+    return res.status(200).json({ success: true, message: 'Order returned to queue.', data: data.data });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Error rejecting order', error: e.message });
+  }
+};
+
 // @desc    Get single order by ID
 // @route   GET /api/orders/:id
 // @access  Private (SECURITY FIX: owner / admin / store_manager / assigned partner only)
@@ -1811,4 +1859,4 @@ export const adminOverrideDeliver = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Admin override failed', error: e.message });
   }
 };
-
+server/supabase_delivery_cod_otp_flow.sql

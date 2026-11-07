@@ -24,6 +24,8 @@ import { isOrderInScope } from './storeScope';
 import { triggerDeliveredInvoiceEmail } from '../services/invoice';
 import { DeliveryBottomNav } from './DeliveryPocket';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
+
 // Checkout wale delivery-instruction values ka label + icon map
 const INSTRUCTION_META = {
   leave_with_guard: { label: 'Leave with guard', icon: ShieldCheck },
@@ -246,7 +248,7 @@ const DeliveryOrderDetail = () => {
     setUpdating(true);
     setError('');
     const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(`/api/orders/${order.id}/advance-step`, {
+    const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/advance-step`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
       body: JSON.stringify({ step: target }),
@@ -266,7 +268,7 @@ const DeliveryOrderDetail = () => {
     setUpdating(true);
     setError('');
     const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(`/api/orders/${order.id}/collect-payment`, {
+    const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/collect-payment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
       body: JSON.stringify({}),
@@ -283,7 +285,7 @@ const DeliveryOrderDetail = () => {
     setUpdating(true);
     const { data: { session } } = await supabase.auth.getSession();
     // verify-otp sirf OTP verify karta hai (deliver alag step hai)
-    const response = await fetch(`/api/orders/${order.id}/verify-otp`, {
+    const response = await fetch(`${API_BASE_URL}/api/orders/${order.id}/verify-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
       body: JSON.stringify({ otp }),
@@ -305,7 +307,7 @@ const DeliveryOrderDetail = () => {
     setIssueError('');
     const { data: { session } } = await supabase.auth.getSession();
     try {
-      const res = await fetch(`/api/orders/${order.id}/delivery-issue`, {
+      const res = await fetch(`${API_BASE_URL}/api/orders/${order.id}/delivery-issue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
         body: JSON.stringify({ reason: issueReason }),
@@ -331,7 +333,7 @@ const DeliveryOrderDetail = () => {
     setReviewError('');
     const { data: { session } } = await supabase.auth.getSession();
     try {
-      const res = await fetch(`/api/orders/${order.id}/review`, {
+      const res = await fetch(`${API_BASE_URL}/api/orders/${order.id}/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
         body: JSON.stringify({ rating: reviewRating, tags: reviewTags, comment: reviewComment.trim() }),
