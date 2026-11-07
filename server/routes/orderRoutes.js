@@ -9,6 +9,12 @@ import {
   retryPendingAssignments,
   deliverOrderWithOtp,
   transitionDeliveryStatus,
+  cancelOrder,
+  reportDeliveryIssue,
+  submitOrderReview,
+  getRefundOrderList,
+  markOrderRefunded,
+  getReviewsList,
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminLooseLimiter, generalLimiter, orderLimiter } from '../middleware/rateLimit.js';
@@ -35,6 +41,17 @@ router.route('/:id/status').put(protect, adminLooseLimiter, updateOrderStatus);
 router.route('/:id/deliver').post(protect, adminLooseLimiter, deliverOrderWithOtp);
 router.route('/:id/delivery-status').post(protect, adminLooseLimiter, transitionDeliveryStatus);
 router.route('/:id/send-invoice-email').post(protect, adminLooseLimiter, sendInvoiceEmailEndpoint);
+// Admin: cancelled / return_refund orders + reviews (specific paths BEFORE generic /:id)
+router.route('/admin/refunds').get(protect, adminLooseLimiter, getRefundOrderList);
+router.route('/admin/reviews').get(protect, adminLooseLimiter, getReviewsList);
+// Customer cancel (own order, before packed)
+router.route('/:id/cancel').post(protect, generalLimiter, cancelOrder);
+// Delivery partner: report issue (return/refund)
+router.route('/:id/delivery-issue').post(protect, generalLimiter, reportDeliveryIssue);
+// Delivery partner: submit review (after delivered, once)
+router.route('/:id/review').post(protect, generalLimiter, submitOrderReview);
+// Admin: mark order as refunded (only pending)
+router.route('/:id/mark-refunded').patch(protect, adminLooseLimiter, markOrderRefunded);
 // Admin manual override (auto-assign ke bawajood partner change)
 router.route('/:id/assign').put(protect, adminLooseLimiter, assignDeliveryPartner);
 // Store Manager: packed mark + turant auto-assign

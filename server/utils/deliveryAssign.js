@@ -118,7 +118,7 @@ export const pickNearestPartner = (eligible, locationsById, storeCoords) => {
 
 // Terminal states — inke baad rider dobara FREE hai, baaki sab (assigned,
 // accepted, picked_up, out_for_delivery, packed, ...) me wo BUSY hai.
-const TERMINAL_STATUSES = ['delivered', 'completed', 'cancelled', 'failed'];
+const TERMINAL_STATUSES = ['delivered', 'completed', 'cancelled', 'return_refund', 'failed'];
 // PostgREST `in` filter case-sensitive hai — DB me 'Delivered' jaise variants
 // bhi hain, isliye dono cases bhejo (JS me final lowercase check bhi hai).
 const TERMINAL_VARIANTS = [

@@ -9,7 +9,6 @@ import {
   Package,
   RotateCcw,
   Search,
-  Star,
   Truck,
   XCircle,
 } from 'lucide-react';
@@ -39,7 +38,7 @@ const statusIcon = (order) => {
   const s = String(order.status || '').toLowerCase();
   if (s === 'delivered')
     return { Icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-600' };
-  if (s === 'cancelled')
+  if (s === 'cancelled' || s === 'return_refund')
     return { Icon: XCircle, cls: 'bg-rose-100 text-rose-500' };
   if (s === 'out_for_delivery' || s === 'picked_up' || s === 'accepted')
     return { Icon: Truck, cls: 'bg-amber-100 text-amber-600' };
@@ -60,13 +59,6 @@ const OrderHistory = () => {
   const [partnersById, setPartnersById] = useState(new Map());
   const [query, setQuery] = useState('');
   const [reorderId, setReorderId] = useState(null);
-  const [ratedMap, setRatedMap] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('supercart_rated_orders') || '{}');
-    } catch {
-      return {};
-    }
-  });
 
   useEffect(() => {
     if (loading) return;
@@ -151,10 +143,6 @@ const OrderHistory = () => {
     }, 450);
   };
 
-  const handleRate = (event, order) => {
-    event.stopPropagation();
-    navigate(`/profile/orders/${order.id}?rate=1`);
-  };
 
   if (loading || ordersLoading) {
     return (
@@ -232,7 +220,6 @@ const OrderHistory = () => {
             const { Icon, cls } = statusIcon(order);
             const thumbs = items.slice(0, 3);
             const extra = Math.max(0, items.length - thumbs.length);
-            const rated = Boolean(ratedMap?.[order.id]);
 
             return (
               <article
@@ -288,7 +275,7 @@ const OrderHistory = () => {
                 )}
 
                 {/* Actions */}
-                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-dashed border-slate-200 pt-3">
+                <div className="mt-3 grid grid-cols-1 gap-2 border-t border-dashed border-slate-200 pt-3">
                   <button
                     type="button"
                     onClick={(e) => handleReorder(e, order)}
@@ -297,18 +284,6 @@ const OrderHistory = () => {
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     {reorderId === order.id ? 'Adding…' : 'Reorder'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => handleRate(e, order)}
-                    className={`inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-black transition ${
-                      rated
-                        ? 'bg-amber-50 text-amber-600'
-                        : 'text-emerald-700 hover:bg-emerald-50'
-                    }`}
-                  >
-                    <Star className={`h-3.5 w-3.5 ${rated ? 'fill-current' : ''}`} />
-                    {rated ? 'Rated' : 'Rate order'}
                   </button>
                 </div>
               </article>

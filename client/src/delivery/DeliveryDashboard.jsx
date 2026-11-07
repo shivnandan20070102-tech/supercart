@@ -954,8 +954,9 @@ const DeliveryDashboard = () => {
     }
   };
 
-  const activeOrders = orders.filter((order) => String(order.status || '').toLowerCase() !== 'delivered');
-  const historyOrders = orders.filter((order) => String(order.status || '').toLowerCase() === 'delivered');
+  const TERMINAL_DELIVERY = new Set(['delivered', 'cancelled', 'return_refund']);
+  const activeOrders = orders.filter((order) => !TERMINAL_DELIVERY.has(String(order.status || '').toLowerCase()));
+  const historyOrders = orders.filter((order) => TERMINAL_DELIVERY.has(String(order.status || '').toLowerCase()));
   // Map pins: ACTIVE orders ke delivery addresses (coords hon tabhi). Blue Dot
   // (rider) hamesha rehta hai; ye pins Accept ke baad uske SAATH judte hain.
   // useMemo taaki har render par nayi array na bane (map effect bekaar me na chale).
@@ -992,6 +993,7 @@ const DeliveryDashboard = () => {
     const canShip = status === 'picked_up';
     const canComplete = status === 'out_for_delivery';
     const isDelivered = status === 'delivered';
+    const isCancelledOrReturn = status === 'cancelled' || status === 'return_refund';
     const clientName = customer.name || address.name || t.customerFallback;
     const clientPhone = customer.phone || address.phone || '';
     const instructions = normalizeInstructions(order.delivery_instructions);
@@ -1014,6 +1016,14 @@ const DeliveryDashboard = () => {
           </div>
         </div>
 
+        {isCancelledOrReturn && (
+          <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/60 p-3 text-center">
+            <p className="text-sm font-black text-rose-300">
+              {status === 'cancelled' ? 'Order cancelled' : 'Order returned / refund'}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">Take items back to the store.</p>
+          </div>
+        )}
         <div className="mt-4 space-y-2 border-t border-slate-800 pt-4">
           {items.map((item, index) => (
             <div key={`${order.id}-${index}`} className="flex justify-between rounded-lg bg-slate-800 p-3 text-xs">

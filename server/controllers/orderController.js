@@ -1,6 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { getShippingCoords, resolveOrderStore, calculateDeliveryCharge, calculateDeliveryFee } from '../utils/storeAssign.js';
-import { releaseStockReservation, reserveStockForOrder } from '../utils/stock.js';
+import { releaseStockReservation, reserveStockForOrder, normalizeStockItems } from '../utils/stock.js';
 import { barcodesMatch, itemProductId } from '../utils/barcodeMatch.js';
 import crypto from 'node:crypto';
 
@@ -58,6 +58,73 @@ const STORE_QUEUE_SET = new Set([
   '',
 ]);
 const isStoreQueueStatus = (s) => STORE_QUEUE_SET.has(normalizeStatusKey(s));
+
+// =====================================================================
+// Cancel / Refund / Review helpers (Step 2 — service-role, server-side checks)
+// =====================================================================
+const DELIVERY_ISSUE_REASONS = new Set([
+  'customer_refused',
+  'damaged',
+  'wrong_address',
+  'customer_unreachable',
+]);
+const REVIEW_TAGS = new Set([
+  'good_behavior',
+  'bad_behavior',
+  'polite',
+  'rude',
+  'late_to_open_door',
+  'payment_issue',
+  'wrong_address',
+  'other',
+]);
+
+const normalizePaymentMethod = (val) => String(val || '').trim().toLowerCase();
+const isCashOnDelivery = (method) => normalizePaymentMethod(method).includes('cash');
+
+// Refund rule: COD -> hamesha 'none'. Non-COD -> koi real gateway nahi hai,
+// isliye 'pending' + amount (kabhi auto-refund nahi / kabhi paisa wapas nahi).
+const buildRefundFields = (order) => {
+  if (isCashOnDelivery(order.payment_method)) {
+    return { refund_status: 'none', refund_amount: 0 };
+  }
+  return { refund_status: 'pending', refund_amount: Number(order.total_price ?? 0) || 0 };
+};
+
+// Idempotent stock restore: sirf tab chalta hai jab transition actually hua
+// ho (.eq('status', ...) guard). Non-DB products skip ho jate hain (koi
+// double-add nahi). Over-and-over call safe hai — release is additive by id.
+const restoreStockForCancelledOrder = async (items) => {
+  try {
+    const normalized = normalizeStockItems(items).filter((e) => e.dbId != null);
+    if (normalized.length === 0) return;
+    await releaseStockReservation(
+      supabase,
+      normalized.map((e) => ({ dbId: e.dbId, qty: e.qty }))
+    );
+  } catch { /* best-effort — order state pahle hi set ho chuka */ }
+};
+
+const getDbUserRole = async (uid) => {
+  if (!uid) return '';
+  try {
+    const { data } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
+    return String(data?.role || '').toLowerCase();
+  } catch { return ''; }
+};
+
+// Server-side admin check — mirrors the auth flow (users.role, metadata, or legacy user_roles).
+const isAdminUser = async (req) => {
+  const uid = req.user?.id ? String(req.user.id) : '';
+  if (!uid) return false;
+  if (String(req.user?.user_metadata?.role || '').toLowerCase() === 'admin') return true;
+  const role = await getDbUserRole(uid);
+  if (role === 'admin') return true;
+  try {
+    const { data: ur } = await supabase.from('user_roles').select('role').eq('user_id', uid).maybeSingle();
+    return String(ur?.role || '').toLowerCase() === 'admin';
+  } catch { return false; }
+};
 
 // Order insert ke turant baad assignment state resolve karo:
 // FINAL FLOW: Customer -> nearest store -> store PACKED kare TABHI delivery assign.
@@ -1287,3 +1354,278 @@ export const retryPendingAssignments = async (req, res) => {
     });
   }
 };
+
+// =====================================================================
+// Cancel / Refund / Review endpoints (Step 2)
+// =====================================================================
+
+// @desc    Customer cancel (own order, before packed)
+// @route   POST /api/orders/:id/cancel
+// @access  Private (order owner only)
+export const cancelOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const uid = req.user?.id ? String(req.user.id) : '';
+    if (!uid) return res.status(401).json({ success: false, message: 'Not authorized.' });
+
+    const reason = String(req.body?.reason || req.body?.cancel_reason || '').trim().slice(0, 300);
+
+    const { data: order, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+
+    // Ownership: sirf order ka owner hi cancel kar sakta hai.
+    if (!order.user_id || String(order.user_id) !== uid) {
+      return res.status(403).json({ success: false, message: 'You can only cancel your own order.' });
+    }
+
+    // Sirf store-queue (pack se pehle) cancel ho sakta hai. Packed ya aage = 400.
+    if (!isStoreQueueStatus(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order can only be cancelled before it is packed.',
+        code: 'ORDER_NOT_CANCELLABLE',
+      });
+    }
+
+    const refund = buildRefundFields(order);
+
+    const { data: updated, error: updErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        cancelled_by: 'customer',
+        cancel_reason: reason,
+        cancelled_at: new Date().toISOString(),
+        ...refund,
+      })
+      .eq('id', id)
+      .eq('status', order.status) // race guard
+      .select()
+      .maybeSingle();
+
+    if (updErr || !updated) {
+      return res.status(409).json({ success: false, message: 'Order changed. Refresh and try again.' });
+    }
+
+    // Idempotent stock restore (sirf successful transition par).
+    await restoreStockForCancelledOrder(updated.order_items || order.order_items);
+
+    return res.status(200).json({ success: true, message: 'Order cancelled.', data: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error cancelling order', error: error.message });
+  }
+};
+
+// @desc    Delivery partner reports an issue (return/refund)
+// @route   POST /api/orders/:id/delivery-issue
+// @access  Private (assigned partner only)
+export const reportDeliveryIssue = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pid = req.user?.id ? String(req.user.id) : '';
+    if (!pid) return res.status(401).json({ success: false, message: 'Not authorized.' });
+
+    const reason = String(req.body?.reason || '').trim();
+    if (!DELIVERY_ISSUE_REASONS.has(reason)) {
+      return res.status(400).json({ success: false, message: 'Invalid issue reason.', code: 'INVALID_REASON' });
+    }
+
+    const { data: order, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+
+    // Sirf assigned partner hi issue report kar sakta hai.
+    if (!order.delivery_boy_id || String(order.delivery_boy_id) !== pid) {
+      return res.status(403).json({ success: false, message: 'This order is not assigned to you.' });
+    }
+
+    // picked_up .. reached_customer ke beech.
+    const cur = normalizeStatusKey(order.status);
+    const allowed = ['picked_up', 'out_for_delivery', 'reached_customer'];
+    if (!allowed.includes(cur)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Issue can only be reported after pickup and before/at delivery.',
+        code: 'INVALID_DELIVERY_STAGE',
+      });
+    }
+
+    const refund = buildRefundFields(order);
+
+    const { data: updated, error: updErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'return_refund',
+        return_reason: reason,
+        cancelled_by: 'delivery',
+        cancelled_at: new Date().toISOString(),
+        ...refund,
+      })
+      .eq('id', id)
+      .eq('status', order.status) // race guard
+      .select()
+      .maybeSingle();
+
+    if (updErr || !updated) {
+      return res.status(409).json({ success: false, message: 'Order changed. Refresh and try again.' });
+    }
+
+    await restoreStockForCancelledOrder(updated.order_items || order.order_items);
+    return res.status(200).json({ success: true, message: 'Delivery issue reported. Order marked return/refund.', data: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error reporting issue', error: error.message });
+  }
+};
+
+// @desc    Delivery partner submits a review for a delivered order
+// @route   POST /api/orders/:id/review
+// @access  Private (assigned partner, delivered order, once)
+export const submitOrderReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pid = req.user?.id ? String(req.user.id) : '';
+    if (!pid) return res.status(401).json({ success: false, message: 'Not authorized.' });
+
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be an integer between 1 and 5.' });
+    }
+
+    const rawTags = Array.isArray(req.body?.tags) ? req.body.tags : [];
+    const tags = [...new Set(rawTags.map((t) => String(t).trim()).filter(Boolean))];
+    if (tags.some((t) => !REVIEW_TAGS.has(t))) {
+      return res.status(400).json({ success: false, message: 'One or more tags are not allowed.', code: 'INVALID_TAG' });
+    }
+
+    const comment = String(req.body?.comment || '').trim();
+    if (comment.length > 500) {
+      return res.status(400).json({ success: false, message: 'Comment cannot exceed 500 characters.' });
+    }
+
+    const { data: order, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+
+    if (!order.delivery_boy_id || String(order.delivery_boy_id) !== pid) {
+      return res.status(403).json({ success: false, message: 'This order is not assigned to you.' });
+    }
+    if (normalizeStatusKey(order.status) !== 'delivered') {
+      return res.status(400).json({ success: false, message: 'You can only review a delivered order.' });
+    }
+
+    // exactly-once = UNIQUE(order_id) + DB trigger. Duplicate -> 23505.
+    const { data: inserted, error: insErr } = await supabase
+      .from('order_reviews')
+      .insert({
+        order_id: Number(order.id),
+        reviewer_id: pid,
+        customer_id: order.user_id || null,
+        rating,
+        tags,
+        comment: comment || null,
+      })
+      .select()
+      .single();
+
+    if (insErr) {
+      if (/23505|order_reviews_once_per_order/.test(String(insErr.message || ''))) {
+        return res.status(409).json({ success: false, message: 'This order has already been reviewed.', code: 'REVIEW_ALREADY_EXISTS' });
+      }
+      return res.status(500).json({ success: false, message: 'Failed to save review', error: insErr.message });
+    }
+
+    return res.status(201).json({ success: true, message: 'Review submitted.', data: inserted });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error submitting review', error: error.message });
+  }
+};
+
+// @desc    Admin: list cancelled / return_refund orders
+// @route   GET /api/orders/admin/refunds
+// @access  Private (admin only)
+export const getRefundOrderList = async (req, res) => {
+  try {
+    if (!(await isAdminUser(req))) {
+      return res.status(403).json({ success: false, message: 'Admin access required.' });
+    }
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .in('status', ['cancelled', 'canceled', 'return_refund'])
+      .order('created_at', { ascending: false });
+    if (error) {
+      return res.status(500).json({ success: false, message: 'Failed to fetch refund orders', error: error.message });
+    }
+    return res.status(200).json({ success: true, count: orders?.length || 0, data: orders || [] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching refund orders', error: error.message });
+  }
+};
+
+// @desc    Admin: mark an order as refunded (only pending)
+// @route   PATCH /api/orders/:id/mark-refunded
+// @access  Private (admin only)
+export const markOrderRefunded = async (req, res) => {
+  try {
+    if (!(await isAdminUser(req))) {
+      return res.status(403).json({ success: false, message: 'Admin access required.' });
+    }
+    const { id } = req.params;
+    const { data: order, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (fetchErr || !order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (order.refund_status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Only pending refunds can be marked refunded.', code: 'REFUND_NOT_PENDING' });
+    }
+    const { data: updated, error: updErr } = await supabase
+      .from('orders')
+      .update({ refund_status: 'refunded' })
+      .eq('id', id)
+      .eq('refund_status', 'pending')
+      .select()
+      .maybeSingle();
+    if (updErr || !updated) {
+      return res.status(409).json({ success: false, message: 'Refund state changed. Refresh and try again.' });
+    }
+    return res.status(200).json({ success: true, message: 'Order marked as refunded.', data: updated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error marking refunded', error: error.message });
+  }
+};
+
+// @desc    Admin: list reviews (with average rating)
+// @route   GET /api/orders/admin/reviews
+// @access  Private (admin only)
+export const getReviewsList = async (req, res) => {
+  try {
+    if (!(await isAdminUser(req))) {
+      return res.status(403).json({ success: false, message: 'Admin access required.' });
+    }
+    const { data: reviews, error } = await supabase
+      .from('order_reviews')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) {
+      return res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
+    }
+    const all = reviews || [];
+    const avg = all.length ? all.reduce((s, r) => s + Number(r.rating || 0), 0) / all.length : 0;
+    return res.status(200).json({ success: true, count: all.length, averageRating: Math.round(avg * 100) / 100, data: all });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching reviews', error: error.message });
+  }
+};
+

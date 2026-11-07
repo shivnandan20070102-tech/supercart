@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   BadgePercent,
@@ -14,12 +14,12 @@ import {
   Package,
   Phone,
   Repeat2,
-  Star,
   Truck,
+  XCircle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
-import { getMyOrdersApi } from '../services/api';
+import api, { getMyOrdersApi } from '../services/api';
 import { supabase } from '../config/supabase';
 import { downloadOrderInvoice } from '../services/invoice';
 
@@ -53,7 +53,6 @@ const BillRow = ({ label, value, bold, green, strike }) => (
 
 const OrderDetail = () => {
   const { id } = useParams();
-  const [searchParams] = useSearchParams();
   const { user, loading } = useAuth();
   const { addToCart } = useCart();
   const navigate = useNavigate();
@@ -65,15 +64,11 @@ const OrderDetail = () => {
   const [invoiceError, setInvoiceError] = useState('');
   const [copied, setCopied] = useState(false);
   const [repeating, setRepeating] = useState(false);
-  const [rating, setRating] = useState(0);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [rated, setRated] = useState(false);
-  const [showRateBox, setShowRateBox] = useState(false);
   const [partner, setPartner] = useState(null);
-
-  useEffect(() => {
-    if (searchParams.get('rate') === '1') setShowRateBox(true);
-  }, [searchParams]);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => {
     if (loading) return;
@@ -92,13 +87,6 @@ const OrderDetail = () => {
           setOrder(null);
         } else {
           setOrder(found);
-          try {
-            const ratedMap = JSON.parse(localStorage.getItem('supercart_rated_orders') || '{}');
-            if (ratedMap?.[found.id]) {
-              setRated(true);
-              setRating(Number(ratedMap[found.id]) || 5);
-            }
-          } catch { /* ignore */ }
         }
       } catch (e) {
         setFetchError(e?.message || 'Could not load order.');
@@ -204,6 +192,39 @@ const OrderDetail = () => {
     }
   };
 
+  const handleCancelOrder = async () => {
+    if (!order || cancelling) return;
+    setCancelling(true);
+    setCancelError('');
+    try {
+      const token = localStorage.getItem('supercart_token') || '';
+      const res = await fetch(`${api.API_BASE_URL}/api/orders/${order.id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason: cancelReason || 'Other' }),
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.success) {
+        setCancelError(result?.message || 'Could not cancel order.');
+        return;
+      }
+      setCancelOpen(false);
+      setCancelReason('');
+      // Fresh fetch se new status (cancelled + refund fields) lao.
+      const reload = await getMyOrdersApi(user.id);
+      const found = (reload.data || []).find((o) => String(o.id) === String(id));
+      if (found) setOrder(found);
+      else setOrder((prev) => ({ ...(prev || {}), ...(result.order || result.data || {}) }));
+    } catch (e) {
+      setCancelError(e?.message || 'Could not cancel order.');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleRepeat = () => {
     if (!order || items.length === 0) return;
     setRepeating(true);
@@ -226,17 +247,6 @@ const OrderDetail = () => {
     }, 450);
   };
 
-  const handleRateSubmit = (value) => {
-    const v = Number(value) || 0;
-    if (v < 1 || v > 5) return;
-    setRating(v);
-    setRated(true);
-    try {
-      const map = JSON.parse(localStorage.getItem('supercart_rated_orders') || '{}');
-      map[order.id] = v;
-      localStorage.setItem('supercart_rated_orders', JSON.stringify(map));
-    } catch { /* ignore */ }
-  };
 
   if (loading || fetching) {
     return (
@@ -278,6 +288,12 @@ const OrderDetail = () => {
   }
 
   const delivered = isDelivered(order);
+  const isTerminal = statusKey === 'cancelled' || statusKey === 'return_refund';
+  const canCancel =
+    !isTerminal &&
+    ['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created', ''].includes(statusKey);
+  const refundStatus = order?.refund_status || 'none';
+  const refundAmount = Number(order?.refund_amount ?? order?.refundAmount ?? 0);
   const addressLine = getDeliveryAddressLine(order);
   const paymentMode = order.payment_method || order.paymentMethod || 'Cash On Delivery';
   const placedAt = formatOrderPlaced(order.created_at || order.createdAt);
@@ -311,6 +327,21 @@ const OrderDetail = () => {
       <div className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
         {invoiceError && (
           <p className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{invoiceError}</p>
+        )}
+
+        {isTerminal && (
+          <section aria-label="Order cancellation status" className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+            <p className="text-sm font-black text-rose-700">
+              {statusKey === 'return_refund' ? 'Order returned / refund initiated' : 'Order cancelled'}
+            </p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-rose-600">
+              {/cash/i.test(paymentMode)
+                ? 'No payment was collected (Cash on Delivery).'
+                : refundStatus === 'refunded'
+                  ? `Refund issued: ₹${refundAmount}`
+                  : `Refund pending: ₹${refundAmount}`}
+            </p>
+          </section>
         )}
 
         {showDeliveryOtp && (
@@ -449,47 +480,6 @@ const OrderDetail = () => {
           </div>
         </section>
 
-        {/* Rating */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[13px] font-black text-slate-900">How were your ordered items?</p>
-            {!showRateBox && !rated && (
-              <button
-                type="button"
-                onClick={() => setShowRateBox(true)}
-                className="rounded-xl bg-amber-100 px-3.5 py-2 text-xs font-black text-amber-700 transition hover:bg-amber-200"
-              >
-                Rate now
-              </button>
-            )}
-          </div>
-          {(showRateBox || rated) && (
-            <div className="mt-3 flex items-center gap-1.5">
-              {[1, 2, 3, 4, 5].map((star) => {
-                const active = (hoverRating || rating) >= star;
-                return (
-                  <button
-                    key={star}
-                    type="button"
-                    aria-label={`Rate ${star} star`}
-                    onClick={() => handleRateSubmit(star)}
-                    onMouseEnter={() => setHoverRating(star)}
-                    onMouseLeave={() => setHoverRating(0)}
-                    className="rounded-lg p-1 transition hover:scale-110"
-                  >
-                    <Star className={`h-6 w-6 ${active ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
-                  </button>
-                );
-              })}
-              {rated && (
-                <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-black text-emerald-600">
-                  <Check className="h-3.5 w-3.5" /> Thanks for rating!
-                </span>
-              )}
-            </div>
-          )}
-        </section>
-
         {/* Bill details */}
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <p className="text-[13px] font-black text-slate-900">Bill details</p>
@@ -559,6 +549,22 @@ const OrderDetail = () => {
           </div>
         </section>
 
+        {canCancel && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[13px] font-black text-slate-900">Change of mind?</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              You can cancel this order before it is packed.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCancelOpen(true)}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-4 py-3 text-sm font-black text-white transition hover:bg-rose-700 active:scale-[0.99]"
+            >
+              <XCircle className="h-4 w-4" /> Cancel order
+            </button>
+          </section>
+        )}
+
         {/* Help */}
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <p className="text-[13px] font-black text-slate-900">Need help with your order?</p>
@@ -592,6 +598,54 @@ const OrderDetail = () => {
           </button>
         </div>
       </div>
+
+      {/* Cancel order modal */}
+      {cancelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+            <h2 className="text-base font-black text-slate-900">Cancel this order?</h2>
+            <p className="mt-1 text-xs text-slate-500">Choose a reason (optional).</p>
+            <div className="mt-4 space-y-2">
+              {['Ordered by mistake', 'Delivery taking too long', 'I want to change address', 'Other'].map((reason) => (
+                <label
+                  key={reason}
+                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold ${cancelReason === reason ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-slate-200 text-slate-700'}`}
+                >
+                  <input
+                    type="radio"
+                    name="cancel-reason"
+                    checked={cancelReason === reason}
+                    onChange={() => setCancelReason(reason)}
+                    className="accent-rose-600"
+                  />
+                  {reason}
+                </label>
+              ))}
+            </div>
+            {cancelError && (
+              <p className="mt-3 rounded-xl bg-rose-50 p-2.5 text-xs font-bold text-rose-600">{cancelError}</p>
+            )}
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelOpen(false)}
+                disabled={cancelling}
+                className="rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700"
+              >
+                Keep order
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelOrder}
+                disabled={cancelling}
+                className="rounded-xl bg-rose-600 py-3 text-sm font-black text-white disabled:opacity-60"
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
