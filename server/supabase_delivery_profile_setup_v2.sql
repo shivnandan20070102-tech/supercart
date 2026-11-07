@@ -10,6 +10,7 @@ ALTER TABLE public.delivery_profiles
 ALTER TABLE public.delivery_profiles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Delivery partners can insert own profile" ON public.delivery_profiles;
+DROP POLICY IF EXISTS "Delivery partners can insert own incomplete profile" ON public.delivery_profiles;
 CREATE POLICY "Delivery partners can insert own incomplete profile"
   ON public.delivery_profiles FOR INSERT TO authenticated
   WITH CHECK (
@@ -20,6 +21,7 @@ CREATE POLICY "Delivery partners can insert own incomplete profile"
   );
 
 DROP POLICY IF EXISTS "Delivery partners can update own profile" ON public.delivery_profiles;
+DROP POLICY IF EXISTS "Delivery partners can update editable delivery profile" ON public.delivery_profiles;
 CREATE POLICY "Delivery partners can update editable delivery profile"
   ON public.delivery_profiles FOR UPDATE TO authenticated
   USING (user_id = auth.uid())
