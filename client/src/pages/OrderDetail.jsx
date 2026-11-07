@@ -65,6 +65,9 @@ const OrderDetail = () => {
   const [copied, setCopied] = useState(false);
   const [repeating, setRepeating] = useState(false);
   const [partner, setPartner] = useState(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
@@ -108,10 +111,10 @@ const OrderDetail = () => {
   }, [order]);
   const statusKey = String(order?.status || '').toLowerCase();
   const showTracking = Boolean(riderId && TRACKABLE_STATUSES.has(statusKey));
-  const showDeliveryOtp = Boolean(
-    order?.delivery_otp &&
-    ['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer'].includes(statusKey),
-  );
+  // Part A: OTP sirf tab dikhaye ja jab order 'out_for_delivery' ho,
+  // ore sirf customer ko (backend ownership check bhi karta hai). Server
+  // se fresh code laate hain — plain code kahin stored nahi.
+  const showDeliveryOtp = statusKey === 'out_for_delivery';
 
   // Partner ka naam/phone lao (trackable hote hi).
   useEffect(() => {
@@ -157,6 +160,43 @@ const OrderDetail = () => {
       } catch { /* ignore */ }
     };
   }, [id]);
+
+  // Part A: jab order out_for_delivery ho, customer ke liye server-side OTP
+  // fetch karo (sirf owner/admin ko milta hai — backend RLS + SECURITY
+  // DEFINER se guard). Fresh code har baar generate hota hai.
+  useEffect(() => {
+    if (!showDeliveryOtp || !user || !id) {
+      setOtpCode('');
+      return undefined;
+    }
+    let cancelled = false;
+    const fetchOtp = async () => {
+      setOtpLoading(true);
+      setOtpError('');
+      try {
+        const token = localStorage.getItem('supercart_token') || '';
+        const res = await fetch(`${api.API_BASE_URL}/api/orders/${id}/otp`, {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        const result = await res.json().catch(() => null);
+        if (!res.ok || !result?.success) {
+          throw new Error(result?.message || 'Could not fetch OTP');
+        }
+        if (!cancelled) setOtpCode(result.otp);
+      } catch (e) {
+        if (!cancelled) {
+          setOtpCode('');
+          setOtpError(e?.message || 'Could not fetch OTP');
+        }
+      } finally {
+        if (!cancelled) setOtpLoading(false);
+      }
+    };
+    fetchOtp();
+    return () => {
+      cancelled = true;
+    };
+  }, [showDeliveryOtp, user, id]);
 
   const handleView = async () => {
     setInvoiceError('');
@@ -346,9 +386,22 @@ const OrderDetail = () => {
 
         {showDeliveryOtp && (
           <section aria-label="Delivery OTP" className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-xs font-black uppercase tracking-widest text-amber-700">Share this OTP at delivery</p>
-            <p className="mt-2 text-3xl font-black tracking-[0.35em] text-amber-900">{order.delivery_otp}</p>
-            <p className="mt-1 text-xs font-semibold text-amber-800">Do not share it before the delivery partner reaches you.</p>
+            <p className="text-xs font-black uppercase tracking-widest text-amber-700">Delivery OTP</p>
+            {otpLoading ? (
+              <p className="mt-3 flex items-center gap-2 text-sm font-bold text-amber-800">
+                <LoaderCircle className="h-4 w-4 animate-spin" /> Fetching OTP…
+              </p>
+            ) : otpCode ? (
+              <>
+                <p className="mt-2 text-3xl font-black tracking-[0.35em] text-amber-900">{otpCode}</p>
+                <p className="mt-2 text-xs font-semibold leading-5 text-amber-800">
+                  Ye code delivery partner ko tabhi do jab saman mil jaye.
+                  Order delivered hone ke baad ye code kaam nahi karega.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-xs font-bold text-amber-700">{otpError || 'OTP abhi available nahi hai.'}</p>
+            )}
           </section>
         )}
 

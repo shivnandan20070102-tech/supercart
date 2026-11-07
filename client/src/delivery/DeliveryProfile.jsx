@@ -358,7 +358,16 @@ const DeliveryProfile = () => {
         setNotice({ type: 'success', text: 'Profile saved successfully.' });
       }
     } catch (error) {
-      setNotice({ type: 'error', text: error.message || 'Could not save profile.' });
+      const raw = String(error?.message || error || '');
+      // Network-level failure (CORS / server unreachable / RPC missing) vs a
+      // real Supabase error. Show the actual message so the cause is clear.
+      const isNetwork = /failed to fetch|networkerror|load failed/i.test(raw);
+      setNotice({
+        type: 'error',
+        text: isNetwork
+          ? 'Save failed — could not reach the server. Check your internet, then make sure the delivery profile setup migration is applied in Supabase (see project README).'
+          : (raw || 'Could not save profile.'),
+      });
     } finally { setSaving(false); }
   };
 

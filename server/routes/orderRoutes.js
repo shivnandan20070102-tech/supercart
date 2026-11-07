@@ -15,6 +15,11 @@ import {
   getRefundOrderList,
   markOrderRefunded,
   getReviewsList,
+  advanceOrderStep,
+  collectCashPayment,
+  verifyOrderOtp,
+  getCustomerOtp,
+  adminOverrideDeliver,
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminLooseLimiter, generalLimiter, orderLimiter } from '../middleware/rateLimit.js';
@@ -56,6 +61,16 @@ router.route('/:id/mark-refunded').patch(protect, adminLooseLimiter, markOrderRe
 router.route('/:id/assign').put(protect, adminLooseLimiter, assignDeliveryPartner);
 // Store Manager: packed mark + turant auto-assign
 router.route('/:id/pack').put(protect, adminLooseLimiter, markOrderPacked);
+// Part A: Delivery step flow (forward-only) — assigned partner
+router.route('/:id/advance-step').post(protect, adminLooseLimiter, advanceOrderStep);
+// Part A: Partner confirms cash collected (amount from server total)
+router.route('/:id/collect-payment').post(protect, adminLooseLimiter, collectCashPayment);
+// Part A: Partner verifies customer OTP (5-attempt lock)
+router.route('/:id/verify-otp').post(protect, adminLooseLimiter, verifyOrderOtp);
+// Part A: Customer/admin fetch OTP (only when out for delivery)
+router.route('/:id/otp').get(protect, generalLimiter, getCustomerOtp);
+// Part A: Admin override deliver without OTP (reason mandatory + audit)
+router.route('/:id/admin-deliver-override').post(protect, adminLooseLimiter, adminOverrideDeliver);
 router.route('/:id').get(protect, generalLimiter, getOrderById);
 
 export default router;

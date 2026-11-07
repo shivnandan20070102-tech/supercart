@@ -19,6 +19,11 @@ import {
   Mailbox,
   ClipboardList,
   HeartHandshake,
+  Banknote,
+  CreditCard,
+  QrCode,
+  Smartphone,
+  ChevronDown,
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
@@ -45,6 +50,28 @@ const DELIVERY_INSTRUCTION_OPTIONS = [
 // Delivery partner tip presets
 const TIP_PRESETS = [20, 30, 50];
 
+// Part B: payment methods — server flag ONLINE_PAYMENTS_ENABLED false hone par
+// online methods disable rehte hain ('Jald aa raha hai' badge + grey).
+const PAYMENT_METHODS = [
+  { key: 'cod', label: 'Cash on Delivery', icon: Banknote, online: false, desc: 'Pay when your order arrives' },
+  { key: 'upi', label: 'UPI', icon: QrCode, online: true, desc: 'Pay with any UPI app' },
+  { key: 'phonepe', label: 'PhonePe', icon: Smartphone, online: true, desc: 'Pay with PhonePe' },
+  { key: 'google_pay', label: 'Google Pay', icon: Smartphone, online: true, desc: 'Pay with Google Pay' },
+  { key: 'card', label: 'Debit / Credit Card', icon: CreditCard, online: true, desc: 'Pay with your card' },
+];
+
+const paymentLabelFor = (key) =>
+  (PAYMENT_METHODS.find((p) => p.key === key) || {}).label || 'Cash on Delivery';
+
+const normalizePaymentKey = (val) => {
+  const s = String(val || '').trim().toLowerCase();
+  if (s === 'upi') return 'upi';
+  if (s.includes('phone')) return 'phonepe';
+  if (s.includes('google') || s === 'gpay') return 'google_pay';
+  if (s.includes('card') || s.includes('debit') || s.includes('credit')) return 'card';
+  return 'cod';
+};
+
 const Cart = () => {
   const {
     cartItems,
@@ -70,7 +97,10 @@ const Cart = () => {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [paymentPending, setPaymentPending] = useState(false);
   const [paymentCountdown, setPaymentCountdown] = useState(10);
-  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem('supercart_payment_method') || 'Cash On Delivery');
+  const [paymentMethod, setPaymentMethod] = useState(() => normalizePaymentKey(localStorage.getItem('supercart_payment_method')) || 'cod');
+  const [paymentsConfig, setPaymentsConfig] = useState(null);
+  const [payListOpen, setPayListOpen] = useState(false);
+  const onlinePaymentsEnabled = Boolean(paymentsConfig?.online_payments_enabled);
   const [deliveryInstructions, setDeliveryInstructions] = useState([]);
   const [tipAmount, setTipAmount] = useState(0);
   const [customTipActive, setCustomTipActive] = useState(false);
