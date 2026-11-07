@@ -14,6 +14,7 @@ import {
   Phone,
   PhoneOff,
   ShieldCheck,
+  Star,
   Truck,
   Wallet,
 } from 'lucide-react';
@@ -53,6 +54,16 @@ const FLOW = [
   { key: 'delivered', label: 'Delivered' },
 ];
 
+const REVIEW_TAG_OPTIONS = [
+  { value: 'good_behavior', label: 'Good behavior' },
+  { value: 'bad_behavior', label: 'Bad behavior' },
+  { value: 'polite', label: 'Polite' },
+  { value: 'rude', label: 'Rude' },
+  { value: 'wrong_address', label: 'Wrong address' },
+  { value: 'payment_issue', label: 'Payment issue' },
+  { value: 'other', label: 'Other' },
+];
+
 const prettifyStatus = (status) =>
   String(status || 'Placed').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -70,6 +81,17 @@ const DeliveryOrderDetail = () => {
   const [otpOpen, setOtpOpen] = useState(false);
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState('');
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [issueReason, setIssueReason] = useState('');
+  const [issueBusy, setIssueBusy] = useState(false);
+  const [issueError, setIssueError] = useState('');
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewTags, setReviewTags] = useState([]);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewSkipped, setReviewSkipped] = useState(false);
 
   const loadOrder = useCallback(async (uid) => {
     const { data, error: orderError } = await supabase
@@ -190,6 +212,78 @@ const DeliveryOrderDetail = () => {
     setUpdating(false);
   };
 
+  // Report issue: picked_up..reached_customer ke beech (return_refund banao)
+  const submitIssue = async () => {
+    if (!order || issueBusy) return;
+    setIssueBusy(true);
+    setIssueError('');
+    const { data: { session } } = await supabase.auth.getSession();
+    try {
+      const res = await fetch(`/api/orders/${order.id}/delivery-issue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({ reason: issueReason }),
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.success) {
+        setIssueError(result?.message || 'Could not report issue.');
+      } else {
+        setIssueOpen(false);
+        setIssueReason('');
+        await loadOrder(user.id);
+      }
+    } catch {
+      setIssueError('Network error. Please try again.');
+    } finally {
+      setIssueBusy(false);
+    }
+  };
+
+  const submitReview = async () => {
+    if (!order || reviewBusy || reviewRating < 1) return;
+    setReviewBusy(true);
+    setReviewError('');
+    const { data: { session } } = await supabase.auth.getSession();
+    try {
+      const res = await fetch(`/api/orders/${order.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({ rating: reviewRating, tags: reviewTags, comment: reviewComment.trim() }),
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.success) {
+        setReviewError(result?.message || 'Could not submit review.');
+      } else {
+        setReviewOpen(false);
+        setReviewRating(0);
+        setReviewTags([]);
+        setReviewComment('');
+        try { sessionStorage.setItem(`delivery_review_done_${order.id}`, '1'); } catch { /* ignore */ }
+      }
+    } catch {
+      setReviewError('Network error. Please try again.');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const skipReview = () => {
+    setReviewOpen(false);
+    setReviewRating(0);
+    setReviewTags([]);
+    setReviewComment('');
+    setReviewSkipped(true);
+    try { sessionStorage.setItem(`delivery_review_done_${order.id}`, '1'); } catch { /* ignore */ }
+  };
+
+  // Delivered hote hi review sheet khule (jab tak ek baar submit/skip na ho)
+  useEffect(() => {
+    if (!order || String(order.status || '').toLowerCase() !== 'delivered') return;
+    let done = false;
+    try { done = sessionStorage.getItem(`delivery_review_done_${order.id}`) === '1'; } catch { /* ignore */ }
+    if (!done && !reviewSkipped) setReviewOpen(true);
+  }, [order?.status, order?.id, reviewSkipped]);
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-950 text-emerald-300">
@@ -247,6 +341,12 @@ const DeliveryOrderDetail = () => {
 
       <div className="mx-auto max-w-3xl space-y-4 px-4 pt-4">
         {error && <p className="rounded-xl border border-rose-900 bg-rose-950/60 p-3 text-sm font-bold text-rose-300">{error}</p>}
+        {(statusKey === 'cancelled' || statusKey === 'return_refund') && (
+          <div className="rounded-2xl border border-rose-500/40 bg-rose-950/60 p-5 text-center">
+            <p className="text-xl font-black text-rose-300">Order cancelled / refund</p>
+            <p className="mt-1 text-xs text-slate-400">सामान store वापस ले जाओ।</p>
+          </div>
+        )}
         {statusKey === 'delivered' && (
           <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-center">
             <p className="text-xl font-black text-emerald-300">Order completed 🎉</p>
@@ -453,6 +553,16 @@ const DeliveryOrderDetail = () => {
                 <Check className="h-5 w-5" /> Verify OTP & Deliver
               </button>
             )}
+            {(statusKey === 'picked_up' || statusKey === 'reached_customer') && (
+              <button
+                type="button"
+                onClick={() => { setIssueOpen(true); setIssueReason(''); setIssueError(''); }}
+                disabled={updating}
+                className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl border border-rose-500/50 bg-rose-950/40 text-sm font-black text-rose-300 transition hover:bg-rose-900/40"
+              >
+                ⚠️ Report issue
+              </button>
+            )}
           </div>
         </section>
       </div>
@@ -465,6 +575,91 @@ const DeliveryOrderDetail = () => {
             {otpError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{otpError}</p>}
             <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setOtpOpen(false)} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button><button type="submit" disabled={otp.length !== 4 || updating} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-50">{updating ? 'Checking...' : 'Deliver'}</button></div>
           </form>
+        </div>
+      )}
+      {issueOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-700 bg-slate-900 p-6">
+            <h2 className="text-xl font-black">Report an issue</h2>
+            <p className="mt-1 text-sm text-slate-400">This will return the order for a refund.</p>
+            <div className="mt-5 space-y-2">
+              {[
+                { value: 'customer_refused', label: 'Customer refused' },
+                { value: 'damaged', label: 'Damaged' },
+                { value: 'wrong_address', label: 'Wrong address' },
+                { value: 'customer_unreachable', label: 'Customer unreachable' },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setIssueReason(opt.value)}
+                  className={`w-full rounded-xl border px-4 py-3 text-sm font-bold transition ${issueReason === opt.value ? 'border-rose-500 bg-rose-900/40 text-rose-200' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {issueError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{issueError}</p>}
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setIssueOpen(false)} disabled={issueBusy} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button>
+              <button type="button" onClick={submitIssue} disabled={!issueReason || issueBusy} className="rounded-xl bg-rose-500 py-3 text-sm font-black text-slate-950 disabled:opacity-40">
+                {issueBusy ? 'Submitting…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reviewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-700 bg-slate-900 p-6">
+            <h2 className="text-xl font-black">Rate this customer</h2>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  aria-label={`Rate ${star} star`}
+                  onClick={() => setReviewRating(star)}
+                  className="rounded-lg p-1 transition hover:scale-110"
+                >
+                  <Star className={`h-8 w-8 ${reviewRating >= star ? 'fill-amber-400 text-amber-400' : 'text-slate-600'}`} />
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-center text-xs font-bold text-slate-400">
+              {reviewRating < 1 ? 'Select at least one star to submit' : `${reviewRating} star${reviewRating > 1 ? 's' : ''} selected`}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {REVIEW_TAG_OPTIONS.map((tag) => {
+                const active = reviewTags.includes(tag.value);
+                return (
+                  <button
+                    key={tag.value}
+                    type="button"
+                    onClick={() => setReviewTags((prev) => active ? prev.filter((t) => t !== tag.value) : [...prev, tag.value])}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${active ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}
+                  >
+                    {tag.label}
+                  </button>
+                );
+              })}
+            </div>
+            <textarea
+              placeholder="Comment (optional, max 500 chars)"
+              maxLength={500}
+              value={reviewComment}
+              onChange={(e) => setReviewComment(e.target.value)}
+              className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-sm text-white outline-none focus:border-emerald-500"
+              rows={3}
+            />
+            {reviewError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{reviewError}</p>}
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button type="button" onClick={skipReview} disabled={reviewBusy} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Skip</button>
+              <button type="button" onClick={submitReview} disabled={reviewRating < 1 || reviewBusy} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-40">
+                {reviewBusy ? 'Submitting…' : 'Submit'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
       <DeliveryBottomNav active="orders" />
