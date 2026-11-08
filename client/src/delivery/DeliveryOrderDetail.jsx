@@ -48,15 +48,15 @@ const normalizeInstructions = (value) => {
 };
 
 // Accept ke baad ka step flow (sirf agla step enabled rehta hai)
-// Part A: Accepted -> Picked up -> Out for delivery -> Payment -> OTP -> Delivered
+// Part A: Accepted -> Picked up -> Out for delivery -> OTP -> Payment -> Delivered
 // 'payment' aur 'otp' real DB status nahi hain — ye deliverables ke beech ke
 // gate hain (dono tabhi complete hote hain jab payment collected + OTP verified).
 const FLOW = [
   { key: 'accepted', label: 'Accepted' },
   { key: 'picked_up', label: 'Picked Up' },
   { key: 'out_for_delivery', label: 'Out for Delivery' },
-  { key: 'payment', label: 'Payment' },
   { key: 'otp', label: 'OTP' },
+  { key: 'payment', label: 'Payment' },
   { key: 'delivered', label: 'Delivered' },
 ];
 
@@ -640,11 +640,6 @@ const DeliveryOrderDetail = () => {
             )}
             {statusKey === 'out_for_delivery' && (
               <>
-                {!paymentCollected && isCOD && (
-                  <p className="rounded-xl bg-amber-950/40 p-3 text-xs font-bold text-amber-300">
-                    Pehle upar se cash collect karo (Slip to confirm cash).
-                  </p>
-                )}
                 {!otpVerified && (
                   <button
                     type="button"
@@ -654,6 +649,11 @@ const DeliveryOrderDetail = () => {
                   >
                     <ShieldCheck className="h-5 w-5 text-emerald-400" /> Enter Customer OTP
                   </button>
+                )}
+                {!paymentCollected && isCOD && (
+                  <p className="rounded-xl bg-amber-950/40 p-3 text-xs font-bold text-amber-300">
+                    Pehle cash bhi collect karo (Slip to confirm cash).
+                  </p>
                 )}
                 {paymentCollected && otpVerified && (
                   <SlideToConfirm onConfirm={() => advanceStep('delivered')} disabled={updating} busyLabel="Delivering…">

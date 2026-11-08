@@ -706,7 +706,11 @@ export const acceptOrderDelivery = async (req, res) => {
     });
 
     if (error) {
-      const { status, json } = rpcError(error, 'Could not accept the order.');
+      const { status, json } = rpcError(
+        error,
+        'Could not accept the order.',
+        'server/supabase_fix_delivery_accept_reject.sql',
+      );
       return res.status(status).json(json);
     }
     if (!data?.success) {
@@ -730,7 +734,11 @@ export const rejectOrderDelivery = async (req, res) => {
     });
 
     if (error) {
-      const { status, json } = rpcError(error, 'Could not reject the order.');
+      const { status, json } = rpcError(
+        error,
+        'Could not reject the order.',
+        'server/supabase_fix_delivery_accept_reject.sql',
+      );
       return res.status(status).json(json);
     }
     if (!data?.success) {
@@ -1717,14 +1725,14 @@ export const getReviewsList = async (req, res) => {
 // (RLS + trigger) — isliye ye hi order aage badhane ke raaste hain.
 
 // RPC ke default error ko friendly message me badlo (migration pending ho to)
-const rpcError = (error, fallback) => {
+const rpcError = (error, fallback, sqlFile = 'server/supabase_delivery_cod_otp_flow.sql') => {
   const msg = String(error?.message || '');
-  if (/does not exist|schema cache|function.*not found/i.test(msg)) {
+  if (/could not find the function|schema cache/i.test(msg)) {
     return {
       status: 500,
       json: {
         success: false,
-        message: `${fallback} — Run server/supabase_delivery_cod_otp_flow.sql in Supabase SQL Editor first.`,
+        message: `${fallback} — Run ${sqlFile} in Supabase SQL Editor first.`,
       },
     };
   }
