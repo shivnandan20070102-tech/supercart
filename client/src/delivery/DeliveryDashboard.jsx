@@ -5,6 +5,7 @@ import { supabase } from '../config/supabase';
 import { getAssignedStoreIds, getDeliveryPoints } from './storeScope';
 import { getDeliverySirenState, playDeliveryAlertSound, preloadDeliverySiren, resumeDeliverySiren, startDeliverySiren, stopDeliverySiren, unlockAllOrderAudio } from '../utils/orderSound';
 import { SignedDocImage } from '../components/SignedDoc';
+import useBroadcastLocation from './useBroadcastLocation';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://supercart-kloc.onrender.com').replace(/\/+$/, '');
 
@@ -668,54 +669,10 @@ const DeliveryDashboard = () => {
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationAllowed, homeStoreId]);
-  useEffect(() => {
-    if (!user || !('geolocation' in navigator)) return undefined;
-    if (!locationAllowed) return undefined;
-    const uid = user.id;
-    let watchId = null;
-    let lastSentAt = 0;
-    let lastSent = null;
-    const MIN_GAP_MS = 30000;
-    const MIN_MOVE_M = 100;
-    const distM = (a, b) => {
-      const R = 6371000;
-      const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-      const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-      const s1 = Math.sin(dLat / 2);
-      const s2 = Math.sin(dLng / 2);
-      const h = s1 * s1 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * s2 * s2;
-      return 2 * R * Math.asin(Math.sqrt(h));
-    };
-    const push = async (lat, lng, force) => {
-      try {
-        if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) return;
-        const now = Date.now();
-        if (!force && now - lastSentAt < MIN_GAP_MS) return;
-        if (!force && lastSent && distM(lastSent, { lat, lng }) < MIN_MOVE_M) return;
-        lastSentAt = now;
-        lastSent = { lat, lng };
-        await supabase.from('users').update({
-          current_lat: lat,
-          current_lng: lng,
-          location_updated_at: new Date().toISOString(),
-        }).eq('id', uid);
-      } catch { /* best-effort — assignment fallback sambhal lega */ }
-    };
-    const onPos = (pos) => {
-      const first = !lastSent;
-      push(pos?.coords?.latitude, pos?.coords?.longitude, first);
-    };
-    const onErr = () => { /* silent */ };
-    try {
-      navigator.geolocation.getCurrentPosition(onPos, onErr, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
-      watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
-    } catch { /* ignore */ }
-    return () => {
-      try {
-        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      } catch { /* ignore */ }
-    };
-  }, [user, locationAllowed]);
+  // Live GPS broadcast (shared hook) — Order Detail khula ho tab bhi chalta rahe.
+  // Dashboard aur DeliveryOrderDetail dono ise mount karte hain; sirf EK watch
+  // chalta hai (duplicate nahi). Shart: online OR active order.
+  const locationFail = useBroadcastLocation({ user, isOnline, orders });
 
   useEffect(() => {
     const active = (orders || []).some((order) => ['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery'].includes(String(order.status || '').toLowerCase()));
@@ -1156,6 +1113,11 @@ const DeliveryDashboard = () => {
         <div className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-slate-950/90 px-4 py-3 text-sm font-black text-emerald-300 shadow-lg">
           <Wallet className="h-4 w-4" /> Today&apos;s earnings: ₹{todayEarnings.toFixed(2)}
         </div>
+        {locationFail && (
+          <p className="mt-2 w-fit rounded-full border border-amber-700 bg-amber-950/80 px-3 py-1.5 text-xs font-bold text-amber-300 shadow backdrop-blur-md">
+            Location update fail, GPS/internet देखो
+          </p>
+        )}
       </div>
 
       <div className="relative z-10 p-3 pb-28 sm:p-8 sm:pb-32">
