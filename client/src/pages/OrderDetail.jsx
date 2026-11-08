@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -169,11 +169,16 @@ const OrderDetail = () => {
   // Part A: OTP customer ko order placed hote hi dikhao (delivery boy ko dene
   // ke liye) — sirf owner/admin ko milta hai (backend RLS + SECURITY DEFINER
   // se guard). Fresh code har baar generate hota hai.
+  // Ek hi order id ke liye OTP sirf ek baar fetch hota hai (ref guard).
+  const otpFetchedForRef = useRef(null);
   useEffect(() => {
     if (!showDeliveryOtp || !user || !id) {
       setOtpCode('');
       return undefined;
     }
+    // OTP sirf ek baar per order id fetch hoga (har render/polling par nahi).
+    if (otpFetchedForRef.current === id) return undefined;
+    otpFetchedForRef.current = id;
     let cancelled = false;
     const fetchOtp = async () => {
       setOtpLoading(true);
