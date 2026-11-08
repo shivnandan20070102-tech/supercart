@@ -158,6 +158,7 @@ const DeliveryOrderDetail = () => {
   const [otpOpen, setOtpOpen] = useState(false);
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState('');
+  const [otpLocked, setOtpLocked] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueReason, setIssueReason] = useState('');
   const [issueBusy, setIssueBusy] = useState(false);
@@ -291,13 +292,24 @@ const DeliveryOrderDetail = () => {
       body: JSON.stringify({ otp }),
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok || !result?.success) setOtpError(result?.message || 'Could not verify OTP.');
-    else {
+    if (!response.ok || !result?.success) {
+      const msg = result?.message || 'Could not verify OTP.';
+      // jab server kahe ki OTP locked hai to "Try again" mat dikhao
+      setOtpLocked(/lock/i.test(msg));
+      setOtpError(msg);
+    } else {
       setOtpOpen(false);
       setOtp('');
+      setOtpLocked(false);
       await loadOrder(user.id);
     }
     setUpdating(false);
+  };
+
+  // Galti se wrong OTP daala to error + input saaf karke dobara likho
+  const retryOtp = () => {
+    setOtpError('');
+    setOtp('');
   };
 
   // Report issue: picked_up..reached_customer ke beech (return_refund banao)
@@ -643,7 +655,7 @@ const DeliveryOrderDetail = () => {
                 {!otpVerified && (
                   <button
                     type="button"
-                    onClick={() => { setOtpOpen(true); setOtpError(''); }}
+                    onClick={() => { setOtpOpen(true); setOtpError(''); setOtpLocked(false); }}
                     disabled={updating}
                     className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-slate-800 text-sm font-black text-white transition hover:bg-slate-700 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
                   >
@@ -681,7 +693,25 @@ const DeliveryOrderDetail = () => {
             <h2 className="text-xl font-black">Customer delivery OTP</h2>
             <p className="mt-1 text-sm text-slate-400">Ask the customer for the 4-digit OTP.</p>
             <input autoFocus inputMode="numeric" maxLength={4} pattern="\d{4}" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} className="mt-5 w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-center text-3xl font-black tracking-[0.5em] text-white outline-none focus:border-emerald-500" />
-            {otpError && <p className="mt-3 rounded-xl bg-rose-950 p-3 text-xs font-bold text-rose-300">{otpError}</p>}
+            {otpLocked ? (
+              <p className="mt-3 rounded-xl bg-rose-950 p-3 text-center text-xs font-bold text-rose-300">
+                OTP locked, admin से संपर्क करो
+              </p>
+            ) : otpError ? (
+              <div className="mt-3 space-y-2">
+                <div className="rounded-xl bg-rose-950 p-3 text-center">
+                  <p className="text-sm font-black text-rose-300">Wrong OTP</p>
+                  <p className="mt-1 text-xs font-bold text-rose-300/75">{otpError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={retryOtp}
+                  className="w-full rounded-xl border border-rose-500/60 bg-rose-950/40 py-2.5 text-sm font-black text-rose-300 transition hover:bg-rose-900/40 active:scale-[0.99]"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : null}
             <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setOtpOpen(false)} className="rounded-xl bg-slate-800 py-3 text-sm font-black text-slate-300">Cancel</button><button type="submit" disabled={otp.length !== 4 || updating} className="rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950 disabled:opacity-50">{updating ? 'Checking...' : 'Verify'}</button></div>
           </form>
         </div>
