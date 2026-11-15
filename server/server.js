@@ -19,11 +19,14 @@ import {
   signupLimiter,
 } from './middleware/rateLimit.js';
 import { startPendingAssignmentWorker } from './jobs/pendingAssignmentWorker.js';
+import { supabase } from './config/supabase.js';
+import { releaseStockReservation, normalizeStockItems } from './utils/stock.js';
 import { getProducts, getProductById } from './controllers/productController.js';
 import { forgotPassword, loginUser, signupUser } from './controllers/authController.js';
 import { submitComplaint } from './controllers/complaintController.js';
 import { createOrder, getOrders, getMyOrders, getOrderById, assignDeliveryPartner, markOrderPacked } from './controllers/orderController.js';
 import { getOrderInvoice, sendInvoiceEmailEndpoint, updateOrderStatus } from './controllers/invoiceController.js';
+import { paymentWebhook } from './controllers/paymentController.js';
 import { getJwtSecret } from './config/jwt.js';
 
 dotenv.config();
@@ -31,11 +34,66 @@ getJwtSecret();
 
 const app = express();
 
+// Abandoned online orders (payment_status pending/failed) older than 20 minutes
+// are safely auto-cancelled. Only online (non-COD) orders still in the store
+// queue are touched — COD, paid and in-transit orders are never cancelled here.
+const isCashPayMethod = (method) =>
+  ['cod', 'cash', 'cash_on_delivery'].includes(String(method || '').trim().toLowerCase());
+
+const ABANDONED_PAYMENT_AGE_MS = 20 * 60 * 1000;
+const STORE_QUEUE_STATUSES = ['placed', 'pending', 'pending_assignment', 'processing', 'confirmed', 'created'];
+
+const cancelAbandonedOnlineOrders = async () => {
+  try {
+    const cutoff = new Date(Date.now() - ABANDONED_PAYMENT_AGE_MS).toISOString();
+    const { data: stale, error } = await supabase
+      .from('orders')
+      .select('id, payment_method, payment_status, status, order_items')
+      .in('payment_status', ['pending', 'failed'])
+      .lt('created_at', cutoff);
+    if (error) return;
+    const eligible = (stale || []).filter(
+      (o) =>
+        !isCashPayMethod(o.payment_method) &&
+        STORE_QUEUE_STATUSES.includes(String(o.status || '').trim().toLowerCase()),
+    );
+    for (const o of eligible) {
+      const { error: updErr } = await supabase
+        .from('orders')
+        .update({
+          status: 'cancelled',
+          cancelled_by: 'system',
+          cancel_reason: 'Online payment not completed within 20 minutes',
+          cancelled_at: new Date().toISOString(),
+        })
+        .eq('id', o.id)
+        .eq('payment_status', o.payment_status);
+      if (!updErr) {
+        // Best-effort stock restore so reserved units are released (never crashes).
+        try {
+          const normalized = normalizeStockItems(o.order_items).filter((e) => e.dbId != null);
+          if (normalized.length) await releaseStockReservation(supabase, normalized);
+        } catch { /* best-effort */ }
+      }
+    }
+  } catch { /* never crash the server */ }
+};
+
+const startAbandonedPaymentCleanup = () => {
+  const intervalMs = Number(process.env.ABANDONED_PAYMENT_CLEANUP_INTERVAL_MS) || 60_000;
+  const timer = setInterval(cancelAbandonedOnlineOrders, intervalMs);
+  if (timer.unref) timer.unref();
+};
+
 // Render (proxy) ke peeche sahi client IP ke liye zaroori — bina iske
 // saare users ek hi IP (proxy) se gine jayenge. 1 = pehla trusted proxy.
 app.set('trust proxy', 1);
 
 // Body Parser Middleware
+// Razorpay webhook needs the RAW JSON body for HMAC signature verification, so
+// it must run BEFORE the global express.json() parser (which would otherwise
+// consume/transform the body). This route is intentionally registered here.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentWebhook);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -167,5 +225,17 @@ app.listen(PORT, () => {
     }
   } else {
     console.log('⏸️ [worker] Pending-assignment worker disabled (PENDING_ASSIGN_WORKER=off)');
+  }
+
+  // Abandoned online payments (pending/failed > 20 min) auto-cancel.
+  // Disable karna ho to: ABANDONED_PAYMENT_CLEANUP=off
+  if (String(process.env.ABANDONED_PAYMENT_CLEANUP || 'on').toLowerCase() !== 'off') {
+    try {
+      startAbandonedPaymentCleanup();
+    } catch (e) {
+      console.warn(`⚠️ Abandoned-payment cleanup start nahi hua: ${e.message}`);
+    }
+  } else {
+    console.log('⏸️ [worker] Abandoned-payment cleanup disabled (ABANDONED_PAYMENT_CLEANUP=off)');
   }
 });

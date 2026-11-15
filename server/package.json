@@ -27,7 +27,8 @@
     "mongoose": "^8.10.1",
     "morgan": "^1.10.0",
     "nodemailer": "^10.1.1",
-    "pdfkit": "^0.20.2"
+    "pdfkit": "^0.20.2",
+    "razorpay": "^2.9.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

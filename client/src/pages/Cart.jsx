@@ -27,7 +27,13 @@ import {
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
-import { createOrderApi, validateCouponApi } from '../services/api';
+import {
+  createOrderApi,
+  validateCouponApi,
+  getPaymentsConfigApi,
+  createPaymentOrderApi,
+  verifyPaymentApi,
+} from '../services/api';
 import { supabase } from '../config/supabase';
 import { fetchStockMap, validateCartStock } from '../services/stock';
 import { findNearestStore } from '../services/nearestStore';
@@ -36,6 +42,7 @@ import { useStore } from '../context/StoreContext';
 import useDeliveryAddress from '../hooks/useDeliveryAddress';
 import { SERVICE_RADIUS_KM, STORE_LOCATION, haversineKm, calculateDeliveryCharge, isFreeDelivery, FREE_DELIVERY_THRESHOLD } from '../config/store';
 import { playOrderSound, preloadOrderSound, unlockOrderAudio } from '../utils/orderSound';
+import { loadRazorpayScript, openRazorpayCheckout } from '../utils/razorpay';
 
 // Delivery partner ke liye instructions — DB me delivery_instructions TEXT[] me save hote hain
 const DELIVERY_INSTRUCTION_OPTIONS = [
@@ -95,12 +102,25 @@ const Cart = () => {
   const [orderToast, setOrderToast] = useState('');
   const [checkoutError, setCheckoutError] = useState('');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [paymentPending, setPaymentPending] = useState(false);
-  const [paymentCountdown, setPaymentCountdown] = useState(10);
   const [paymentMethod, setPaymentMethod] = useState(() => normalizePaymentKey(localStorage.getItem('supercart_payment_method')) || 'cod');
   const [paymentsConfig, setPaymentsConfig] = useState(null);
-  const [payListOpen, setPayListOpen] = useState(false);
+  const [paymentFailed, setPaymentFailed] = useState(false);
+  // The pending online order (created once) is reused on "Try again" so retries
+  // don't create duplicate orders. Cleared on successful payment.
+  const [pendingOnlineOrder, setPendingOnlineOrder] = useState(null);
   const onlinePaymentsEnabled = Boolean(paymentsConfig?.online_payments_enabled);
+
+  // Fetch payment config (public) so the online option is hidden when disabled.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cfg = await getPaymentsConfigApi();
+      if (!cancelled) setPaymentsConfig(cfg);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [deliveryInstructions, setDeliveryInstructions] = useState([]);
   const [tipAmount, setTipAmount] = useState(0);
   const [customTipActive, setCustomTipActive] = useState(false);
@@ -228,8 +248,6 @@ const Cart = () => {
     preloadOrderSound();
   }, []);
 
-  // 10-sec inline confirm: 0% -> 100% linear fill (koi popup nahi)
-  const confirmProgress = Math.min(1, Math.max(0, (10 - paymentCountdown) / 10));
 
   const toggleInstruction = (value) => {
     setDeliveryInstructions((current) =>
@@ -309,123 +327,174 @@ const Cart = () => {
   const couponDiscount = couponApplied && appliedCoupon && couponMinOk ? calcCouponDiscount(appliedCoupon, subtotal) : 0;
   const finalPayable = Math.max(0, subtotal + (deliveryCharge || 0) - couponDiscount + tipAmount);
 
-  useEffect(() => {
-    if (!paymentPending) return undefined;
-    if (paymentCountdown <= 0) {
-      setPaymentPending(false);
-      placeOrder();
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setPaymentCountdown((current) => current - 1), 1000);
-    return () => window.clearTimeout(timer);
-  }, [paymentPending, paymentCountdown]);
-
-  const placeOrder = async () => {
+  // Create the order (shared by COD and online flows). Returns the created order
+  // object (not the full response). Does NOT clear the cart or show success —
+  // that is the caller's job so an online order stays pending until paid.
+  const prepareAndCreateOrder = async () => {
     if (!user) {
-      setCheckoutError('Please login before placing your order.');
-      return;
+      throw new Error('Please login before placing your order.');
     }
 
+    // Stock guard: stale cart (doosre user ne beech me kharid liya ho) to
+    // order bhejo hi mat — fresh DB stock se exact available batao.
+    try {
+      const freshRows = await fetchStockMap(
+        supabase,
+        (cartItems || []).map((i) => i?.id),
+      );
+      const problems = validateCartStock(cartItems, freshRows);
+      if (problems.length > 0) {
+        const p = problems[0];
+        throw new Error(`Only ${p.available} left for "${p.name}" — please reduce quantity.`);
+      }
+      setStockMap(new Map((freshRows || []).map((r) => [String(r.id), r])));
+    } catch (e) {
+      if (/Only \d+ left for/.test(e?.message || '')) throw e;
+      // Stock read fail (offline/RPC) — server authoritative check karega.
+    }
+
+    // Picker se saved delivery address + GPS coords order ke saath bhejo
+    // taaki delivery partner exact spot par navigate kar sake
+    const ship = savedAddress || {};
+    const numOrNull = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : null);
+    const shipLat = numOrNull(ship.lat) ?? numOrNull(ship.latitude);
+    const shipLng = numOrNull(ship.lng) ?? numOrNull(ship.longitude);
+
+    // Order-time authoritative store: DELIVERY address coords se FRESH nearest
+    // store nikalo. Context wala nearestStore stale ho sakta hai (address abhi
+    // badla ho / GPS fix baad me aaya ho) — isliye yehi store_id order me jayega.
+    let orderStoreId = nearestStore?.id ?? null;
+    if (shipLat != null && shipLng != null) {
+      const fresh = await findNearestStore(supabase, shipLat, shipLng);
+      if (fresh.storesAvailable && !fresh.serviceable) {
+        throw new Error("Sorry, we don't deliver to your area yet");
+      }
+      if (fresh.store) orderStoreId = fresh.store.id;
+    }
+
+    const response = await createOrderApi({
+      userId: user.id,
+      // Multi-store: order kis store ko assign hua (orders.store_id)
+      storeId: orderStoreId,
+      orderItems: cartItems.map(({ id, name, price, quantity, image, unit }) => ({
+        productId: id,
+        name,
+        price,
+        quantity,
+        image,
+        unit,
+      })),
+      shippingAddress: {
+        label: ship.label || 'Home',
+        address: ship.address || 'Flat 402, Green Avenue',
+        city: ship.city || '',
+        pincode: ship.pincode || '',
+        postalCode: ship.pincode || '',
+        phone: user.phone || '',
+        latitude: ship.lat ?? null,
+        longitude: ship.lng ?? null,
+        lat: ship.lat ?? null,
+        lng: ship.lng ?? null,
+        houseNo: ship.houseNo || '',
+        landmark: ship.landmark || '',
+        area: ship.area || '',
+        formattedAddress: ship.formattedAddress || ship.address || '',
+      },
+      paymentMethod,
+      itemsPrice: subtotal,
+      deliveryFee: deliveryCharge || 0,
+      couponDiscount,
+      couponCode: couponApplied && appliedCoupon ? appliedCoupon.code : null,
+      deliveryInstructions,
+      tipAmount,
+      totalPrice: finalPayable,
+    });
+
+    if (!response.success) {
+      throw new Error(response.message || 'Order could not be placed.');
+    }
+    return response.data;
+  };
+
+  const showOrderSuccess = () => {
+    // used_count is bumped server-side on order success (no client call needed)
+    clearCart();
+    setCouponApplied(false);
+    setAppliedCoupon(null);
+    setCouponCode('');
+    setCouponError('');
+    setDeliveryInstructions([]);
+    setPlacedTip(tipAmount);
+    setTipAmount(0);
+    setCustomTipActive(false);
+    setCustomTipValue('');
+    setOrderPlaced(true);
+    setOrderToast('Order Placed Successfully! Your order has been confirmed.');
+    playOrderSound();
+  };
+
+  const placeOrderCod = async () => {
     setCheckoutError('');
     setIsCheckingOut(true);
     try {
-      // Stock guard: stale cart (doosre user ne beech me kharid liya ho) to
-      // order bhejo hi mat — fresh DB stock se exact available batao.
-      try {
-        const freshRows = await fetchStockMap(
-          supabase,
-          (cartItems || []).map((i) => i?.id),
-        );
-        const problems = validateCartStock(cartItems, freshRows);
-        if (problems.length > 0) {
-          const p = problems[0];
-          throw new Error(`Only ${p.available} left for "${p.name}" — please reduce quantity.`);
-        }
-        setStockMap(new Map((freshRows || []).map((r) => [String(r.id), r])));
-      } catch (e) {
-        if (/Only \d+ left for/.test(e?.message || '')) throw e;
-        // Stock read fail (offline/RPC) — server authoritative check karega.
-      }
-
-      // Picker se saved delivery address + GPS coords order ke saath bhejo
-      // taaki delivery partner exact spot par navigate kar sake
-      const ship = savedAddress || {};
-      const numOrNull = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : null);
-      const shipLat = numOrNull(ship.lat) ?? numOrNull(ship.latitude);
-      const shipLng = numOrNull(ship.lng) ?? numOrNull(ship.longitude);
-
-      // Order-time authoritative store: DELIVERY address coords se FRESH nearest
-      // store nikalo. Context wala nearestStore stale ho sakta hai (address abhi
-      // badla ho / GPS fix baad me aaya ho) — isliye yehi store_id order me jayega.
-      let orderStoreId = nearestStore?.id ?? null;
-      if (shipLat != null && shipLng != null) {
-        const fresh = await findNearestStore(supabase, shipLat, shipLng);
-        if (fresh.storesAvailable && !fresh.serviceable) {
-          throw new Error("Sorry, we don't deliver to your area yet");
-        }
-        if (fresh.store) orderStoreId = fresh.store.id;
-      }
-
-      const response = await createOrderApi({
-        userId: user.id,
-        // Multi-store: order kis store ko assign hua (orders.store_id)
-        storeId: orderStoreId,
-        orderItems: cartItems.map(({ id, name, price, quantity, image, unit }) => ({
-          productId: id,
-          name,
-          price,
-          quantity,
-          image,
-          unit,
-        })),
-        shippingAddress: {
-          label: ship.label || 'Home',
-          address: ship.address || 'Flat 402, Green Avenue',
-          city: ship.city || '',
-          pincode: ship.pincode || '',
-          postalCode: ship.pincode || '',
-          phone: user.phone || '',
-          latitude: ship.lat ?? null,
-          longitude: ship.lng ?? null,
-          lat: ship.lat ?? null,
-          lng: ship.lng ?? null,
-          houseNo: ship.houseNo || '',
-          landmark: ship.landmark || '',
-          area: ship.area || '',
-          formattedAddress: ship.formattedAddress || ship.address || '',
-        },
-        paymentMethod,
-        itemsPrice: subtotal,
-        deliveryFee: deliveryCharge || 0,
-        couponDiscount,
-        couponCode: couponApplied && appliedCoupon ? appliedCoupon.code : null,
-        deliveryInstructions,
-        tipAmount,
-        totalPrice: finalPayable,
-      });
-
-      if (!response.success) {
-        throw new Error(response.message || 'Order could not be placed.');
-      }
-
-      // used_count is bumped server-side on order success (no client call needed)
-      clearCart();
-      setCouponApplied(false);
-      setAppliedCoupon(null);
-      setCouponCode('');
-      setCouponError('');
-      setDeliveryInstructions([]);
-      setPlacedTip(tipAmount);
-      setTipAmount(0);
-      setCustomTipActive(false);
-      setCustomTipValue('');
-      setOrderPlaced(true);
-      // Order CONFIRMED + saved — abhi ek baar success sound + toast.
-      // Fail path (catch) me kabhi nahi bajta; order creation me koi delay nahi.
-      setOrderToast('Order Placed Successfully! Your order has been confirmed.');
-      playOrderSound();
+      await prepareAndCreateOrder();
+      showOrderSuccess();
     } catch (error) {
       setCheckoutError(error.message || 'Could not connect to the order service.');
+    } finally {
+      setIsCheckingOut(false);
+    }
+  };
+
+  const placeOrderOnline = async () => {
+    setCheckoutError('');
+    setPaymentFailed(false);
+    setIsCheckingOut(true);
+    try {
+      // Reuse the already-created pending order on retries so "Try again" does
+      // not create a duplicate order every time.
+      let order = pendingOnlineOrder;
+      if (!order) {
+        order = await prepareAndCreateOrder();
+        setPendingOnlineOrder(order);
+      }
+
+      // 1. Create the Razorpay order intent (server-side, fail-closed).
+      const intent = await createPaymentOrderApi(order.id, order.total_price);
+
+      // 2. Load the checkout SDK once, then open the Razorpay modal.
+      await loadRazorpayScript();
+      openRazorpayCheckout({
+        key: intent.key_id,
+        amountPaise: Math.round(Number(intent.amount) * 100), // server returns rupees
+        orderId: intent.razorpay_order_id,
+        name: user?.name || 'SuperCart',
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+          contact: user?.phone || '',
+        },
+        handler: async (resp) => {
+          // 3. On success, verify server-side before we trust the payment.
+          try {
+            await verifyPaymentApi({
+              orderId: order.id,
+              razorpayOrderId: resp.razorpay_order_id,
+              razorpayPaymentId: resp.razorpay_payment_id,
+              razorpaySignature: resp.razorpay_signature,
+            });
+            setPendingOnlineOrder(null);
+            showOrderSuccess();
+          } catch (err) {
+            setPaymentFailed(true);
+            setCheckoutError(err?.message || 'Payment could not be verified.');
+          }
+        },
+        onDismiss: () => setPaymentFailed(true),
+      });
+    } catch (error) {
+      setPaymentFailed(true);
+      setCheckoutError(error.message || 'Could not start payment.');
     } finally {
       setIsCheckingOut(false);
     }
@@ -441,19 +510,17 @@ const Cart = () => {
       setCheckoutError("Sorry, we don't deliver to your area yet");
       return;
     }
-    if (isCheckingOut || paymentPending) return;
-    // User gesture (click) ke andar hi audio unlock — warna countdown + API ke
-    // baad Chrome autoplay policy play() block kar deta hai aur sound nahi bajta.
+    if (isCheckingOut) return;
+    // User gesture (click) ke andar hi audio unlock — warna autoplay policy
+    // play() block kar deta hai aur success sound nahi bajta.
     unlockOrderAudio();
     setCheckoutError('');
-    setPaymentCountdown(10);
-    setPaymentPending(true);
-  };
-
-  const cancelPayment = () => {
-    setPaymentPending(false);
-    setPaymentCountdown(10);
-    setCheckoutError('Payment cancelled. Your cart is safe.');
+    setPaymentFailed(false);
+    if (normalizePaymentKey(paymentMethod) === 'cod') {
+      placeOrderCod();
+    } else {
+      placeOrderOnline();
+    }
   };
 
   if (orderPlaced) {
@@ -896,79 +963,112 @@ const Cart = () => {
 
               {/* Payment method and Place Order CTA */}
               <div className="border-t border-slate-100 pt-4">
-                <label htmlFor="payment-method" className="mb-2 block text-xs font-bold text-slate-700">
-                  Payment method
-                </label>
-                <select
-                  id="payment-method"
-                  value={paymentMethod}
-                  onChange={(event) => {
-                    setPaymentMethod(event.target.value);
-                    localStorage.setItem('supercart_payment_method', event.target.value);
-                  }}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-bold text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-                >
-                  <option>Cash On Delivery</option>
-                  <option>UPI</option>
-                  <option>PhonePe</option>
-                  <option>Google Pay</option>
-                  <option>Debit / Credit Card</option>
-                  <option>Other Payment Method</option>
-                </select>
-                <p className="mt-2 text-[10px] text-slate-400">
-                  Payment gateway can be connected to these options later.
-                </p>
+                <p className="mb-2 text-xs font-bold text-slate-700">Payment method</p>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    aria-pressed={normalizePaymentKey(paymentMethod) === 'cod'}
+                    onClick={() => {
+                      setPaymentMethod('cod');
+                      localStorage.setItem('supercart_payment_method', 'cod');
+                      setCheckoutError('');
+                      setPaymentFailed(false);
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3.5 py-3 text-left transition active:scale-[0.99] ${
+                      normalizePaymentKey(paymentMethod) === 'cod'
+                        ? 'border-emerald-500 bg-emerald-50 shadow-xs'
+                        : 'border-slate-200 bg-white hover:border-emerald-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Banknote className={`h-5 w-5 ${normalizePaymentKey(paymentMethod) === 'cod' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <span>
+                        <span className="block text-sm font-black text-slate-800">Cash on Delivery</span>
+                        <span className="block text-[11px] font-medium text-slate-500">Pay when your order arrives</span>
+                      </span>
+                    </span>
+                    <span className={`h-4 w-4 rounded-full border-2 ${normalizePaymentKey(paymentMethod) === 'cod' ? 'border-emerald-600 bg-emerald-600' : 'border-slate-300'}`} />
+                  </button>
+
+                  {onlinePaymentsEnabled && (
+                    <button
+                      type="button"
+                      aria-pressed={normalizePaymentKey(paymentMethod) !== 'cod'}
+                      onClick={() => {
+                        setPaymentMethod('upi');
+                        localStorage.setItem('supercart_payment_method', 'upi');
+                        setCheckoutError('');
+                        setPaymentFailed(false);
+                      }}
+                      className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3.5 py-3 text-left transition active:scale-[0.99] ${
+                        normalizePaymentKey(paymentMethod) !== 'cod'
+                          ? 'border-emerald-500 bg-emerald-50 shadow-xs'
+                          : 'border-slate-200 bg-white hover:border-emerald-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <QrCode className={`h-5 w-5 ${normalizePaymentKey(paymentMethod) !== 'cod' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                        <span>
+                          <span className="block text-sm font-black text-slate-800">Pay Online</span>
+                          <span className="block text-[11px] font-medium text-slate-500">UPI · GPay · PhonePe · Paytm · Cards</span>
+                        </span>
+                      </span>
+                      <span className={`h-4 w-4 rounded-full border-2 ${normalizePaymentKey(paymentMethod) !== 'cod' ? 'border-emerald-600 bg-emerald-600' : 'border-slate-300'}`} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <button
                 onClick={handleCheckout}
-                disabled={!isOnline || serviceable === false || isCheckingOut || paymentPending || deliveryCalculating || Boolean(deliveryError)}
+                disabled={!isOnline || serviceable === false || isCheckingOut || deliveryCalculating || Boolean(deliveryError)}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 py-4 text-sm font-black text-white transition shadow-lg shadow-emerald-600/25 hover:bg-emerald-700 active:scale-98 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none"
               >
-                <span>{!isOnline ? 'Store is currently closed' : serviceable === false ? 'Service not available in your area' : isCheckingOut ? 'Saving your order...' : deliveryCalculating ? 'Calculating delivery fee…' : `Proceed to Pay (₹${finalPayable})`}</span>
+                <span>
+                  {!isOnline
+                    ? 'Store is currently closed'
+                    : serviceable === false
+                      ? 'Service not available in your area'
+                      : isCheckingOut
+                        ? 'Processing…'
+                        : deliveryCalculating
+                          ? 'Calculating delivery fee…'
+                          : normalizePaymentKey(paymentMethod) === 'cod'
+                            ? 'Place Order'
+                            : `Pay ₹${finalPayable}`}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Inline 10-sec confirm — checkout page ke andar hi, koi popup nahi */}
-              {paymentPending && (
-                <div
-                  aria-live="polite"
-                  className="sc-card-in mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-bold text-slate-700">
-                      Confirming your order... last chance to cancel
-                    </p>
-                    <span
-                      key={paymentCountdown}
-                      className="sc-count-pop shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-black tabular-nums text-emerald-700 shadow-sm border border-emerald-100"
+              {paymentFailed && (
+                <div role="alert" aria-live="assertive" className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3">
+                  <p className="text-xs font-black text-rose-700">Payment failed</p>
+                  <p className="mt-1 text-[11px] font-semibold leading-5 text-rose-600">
+                    {checkoutError || 'The payment was not completed. Your items are still safe in your cart.'}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={placeOrderOnline}
+                      disabled={isCheckingOut}
+                      className="rounded-xl bg-emerald-600 py-2.5 text-xs font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
                     >
-                      Auto-confirm in {paymentCountdown}s
-                    </span>
-                  </div>
-                  {/* horizontal progress 0% -> 100% in 10s, green-to-blue gradient */}
-                  <div
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(confirmProgress * 100)}
-                    className="mt-2.5 h-2.5 overflow-hidden rounded-full bg-slate-200/70"
-                  >
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-teal-400 to-sky-500"
-                      style={{
-                        width: `${confirmProgress * 100}%`,
-                        transition: 'width 1s linear',
+                      Try again
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentMethod('cod');
+                        localStorage.setItem('supercart_payment_method', 'cod');
+                        setPaymentFailed(false);
+                        setCheckoutError('');
                       }}
-                    />
+                      disabled={isCheckingOut}
+                      className="rounded-xl border border-rose-300 bg-white py-2.5 text-xs font-black text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                    >
+                      Pay with Cash on Delivery instead
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={cancelPayment}
-                    className="mt-2.5 w-full rounded-xl border border-rose-200 bg-white py-2.5 text-xs font-black text-rose-600 transition hover:bg-rose-50 hover:border-rose-300 active:scale-[0.98] cursor-pointer"
-                  >
-                    Cancel Order
-                  </button>
                 </div>
               )}
 

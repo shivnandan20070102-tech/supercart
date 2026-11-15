@@ -755,6 +755,65 @@ const markOrderPackedDirect = async (orderId, verifiedItems = []) => {
   };
 };
 
+const authHeaders = (json = true) => {
+  const token = localStorage.getItem('supercart_token') || '';
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+// Public payment config — checkout hides the online option when disabled.
+export const getPaymentsConfigApi = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/payments/config`);
+    const json = await readJsonSafe(res);
+    if (res.ok && json?.success) return json;
+    return { success: false, online_payments_enabled: false };
+  } catch {
+    return { success: false, online_payments_enabled: false };
+  }
+};
+
+// Create a Razorpay order intent for an existing (pending) order.
+export const createPaymentOrderApi = async (orderId, amount) => {
+  const res = await fetch(`${API_BASE_URL}/api/payments/create-order`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ order_id: orderId, ...(amount != null ? { amount } : {}) }),
+  });
+  const json = await readJsonSafe(res);
+  throwIfRateLimited(res, json);
+  if (!res.ok || !json?.success) {
+    const err = new Error(json?.message || 'Could not create payment order.');
+    err.status = res.status;
+    throw err;
+  }
+  return json.data;
+};
+
+// Verify a completed Razorpay payment (signature + server-side check).
+export const verifyPaymentApi = async ({ orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature }) => {
+  const res = await fetch(`${API_BASE_URL}/api/payments/verify`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      order_id: orderId,
+      razorpay_order_id: razorpayOrderId,
+      razorpay_payment_id: razorpayPaymentId,
+      razorpay_signature: razorpaySignature,
+    }),
+  });
+  const json = await readJsonSafe(res);
+  throwIfRateLimited(res, json);
+  if (!res.ok || !json?.success) {
+    const err = new Error(json?.message || 'Payment verification failed.');
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+};
+
 export default {
   API_BASE_URL,
   PRODUCT_FETCH_TIMEOUT_MS,
@@ -769,4 +828,7 @@ export default {
   validateCouponApi,
   incrementCouponUsageApi,
   markOrderPackedApi,
+  getPaymentsConfigApi,
+  createPaymentOrderApi,
+  verifyPaymentApi,
 };
