@@ -34,6 +34,16 @@ const isUnassigned = (order) => {
   return boy === null || boy === undefined || String(boy).trim() === '';
 };
 
+// Payment settled check — sirf paid online (ya COD) orders delivery ke liye
+// eligible hain. Unpaid online orders (payment_status != 'paid') kabhi assign
+// nahi hote — pehle payment verify hona zaroori hai (paymentController).
+const isPaymentSettled = (order) => {
+  if (!order) return false;
+  const method = String(order.payment_method || '').trim().toLowerCase();
+  if (['cod', 'cash', 'cash_on_delivery'].includes(method)) return true;
+  return String(order.payment_status || '').trim().toLowerCase() === 'paid';
+};
+
 const getRejectedIds = (order) => {
   if (Array.isArray(order?.rejected_by)) return order.rejected_by.map(String);
   return [];
@@ -297,8 +307,13 @@ export const fetchPendingOrders = async (supabase, limit = 50) => {
     // delivery_boy_id null/'' wale hi sach me unassigned hain.
     // (Admin ne manual assign kiya ho to use dobara touch mat karo.)
     // PACK-FIRST: sirf packed (case-insensitive) hi delivery queue hai.
+    // PAYMENT GATE: unpaid online orders is queue me aate hi nahi (sirf
+    // settled payments — COD ya paid online — assign hote hain).
     return (data || []).filter(
-      (o) => isUnassigned(o) && String(o.status || '').toLowerCase() === 'packed'
+      (o) =>
+        isUnassigned(o) &&
+        String(o.status || '').toLowerCase() === 'packed' &&
+        isPaymentSettled(o)
     );
   } catch (e) {
     console.warn(`⚠️ [assign] pending orders fetch failed: ${e.message}`);
@@ -328,6 +343,8 @@ export const tryAssignSingleOrder = async (supabase, order, partnerPool = null) 
   if (!order || !isUnassigned(order)) return null;
   // PACKED gate: store ne pack nahi kiya -> assign NAHI.
   if (String(order.status || '').toLowerCase() !== 'packed') return null;
+  // PAYMENT GATE: unpaid online order assign NAHI (payment verify ho tabhi).
+  if (!isPaymentSettled(order)) return null;
 
   const rejected = new Set(getRejectedIds(order));
   let partners = partnerPool;

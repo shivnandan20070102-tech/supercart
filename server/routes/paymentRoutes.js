@@ -4,8 +4,19 @@ import {
   ONLINE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
 } from '../services/paymentService.js';
+import { createOrder, verifyPayment } from '../controllers/paymentController.js';
+import { protect } from '../middleware/authMiddleware.js';
+import { generalLimiter } from '../middleware/rateLimit.js';
 
 const router = express.Router();
+
+// Online payment flow (create-order / verify are authenticated — sirf
+// authorized user hi apne order ka payment state badal sake).
+router.post('/create-order', protect, generalLimiter, createOrder);
+router.post('/verify', protect, generalLimiter, verifyPayment);
+// Webhook gateway se aata hai (server-to-server) — public, par raw JSON body
+// (HMAC signature ke liye) zaroori hai. Ye route server.js me global
+// express.json() se PEHLE register hota hai (express.raw ke saath).
 
 // Public payment configuration — client checkout isi se decide karta hai ki
 // online methods enabled hain ya nahi (single source of truth = server env).

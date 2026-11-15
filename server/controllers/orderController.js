@@ -517,7 +517,10 @@ export const createOrder = async (req, res) => {
       order_items: finalItems,
       shipping_address: finalShipping,
       payment_method: canonicalPay,
-      payment_status: isCashPay ? 'pending' : 'paid',
+      // Online orders bhi 'pending' se shuru hote hain (payment confirm sirf
+      // paymentController ke create-order/verify/webhook flow se hota hai).
+      // COD pending rahta hai jab tak partner cash collect nahi karta.
+      payment_status: 'pending',
       items_price: finalItemsPrice,
       delivery_fee: finalDeliveryFee,
       coupon_discount: finalCouponDiscount,

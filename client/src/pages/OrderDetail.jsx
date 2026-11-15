@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
-import api, { getMyOrdersApi } from '../services/api';
+import api, { getMyOrdersApi, createPaymentOrderApi, verifyPaymentApi } from '../services/api';
+import { loadRazorpayScript, openRazorpayCheckout } from '../utils/razorpay';
 import { supabase } from '../config/supabase';
 import { downloadOrderInvoice } from '../services/invoice';
 
@@ -72,6 +73,8 @@ const OrderDetail = () => {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [payNowBusy, setPayNowBusy] = useState(false);
+  const [payError, setPayError] = useState('');
 
   useEffect(() => {
     if (loading) return;
@@ -297,6 +300,50 @@ const OrderDetail = () => {
     }, 450);
   };
 
+  // Pay now — for pending online orders. Reuses the same server-side intent
+  // + Razorpay checkout flow as the cart. Only key_id/order_id reach the
+  // browser; the key secret never leaves the server.
+  const handlePayNow = async () => {
+    if (!order || payNowBusy) return;
+    setPayNowBusy(true);
+    setPayError('');
+    try {
+      const intent = await createPaymentOrderApi(order.id, order.total_price);
+      await loadRazorpayScript();
+      openRazorpayCheckout({
+        key: intent.key_id,
+        amountPaise: Math.round(Number(intent.amount) * 100), // server returns rupees
+        orderId: intent.razorpay_order_id,
+        name: user?.name || 'SuperCart',
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+          contact: user?.phone || '',
+        },
+        handler: async (resp) => {
+          try {
+            await verifyPaymentApi({
+              orderId: order.id,
+              razorpayOrderId: resp.razorpay_order_id,
+              razorpayPaymentId: resp.razorpay_payment_id,
+              razorpaySignature: resp.razorpay_signature,
+            });
+            const reload = await getMyOrdersApi(user.id);
+            const found = (reload.data || []).find((o) => String(o.id) === String(id));
+            if (found) setOrder(found);
+          } catch (err) {
+            setPayError(err?.message || 'Payment could not be verified.');
+          }
+        },
+        onDismiss: () => {},
+      });
+    } catch (err) {
+      setPayError(err?.message || 'Could not start payment.');
+    } finally {
+      setPayNowBusy(false);
+    }
+  };
+
 
   if (loading || fetching) {
     return (
@@ -348,6 +395,16 @@ const OrderDetail = () => {
   const paymentMode = order.payment_method || order.paymentMethod || 'Cash On Delivery';
   const placedAt = formatOrderPlaced(order.created_at || order.createdAt);
   const arrivedAt = arrivedAtTime(order);
+
+  const isCashOrder = /cash/i.test(String(paymentMode));
+  const payStatus = String(order?.payment_status || '').toLowerCase();
+  const canPayNow = !isCashOrder && payStatus !== 'paid';
+  const payBadge =
+    payStatus === 'paid'
+      ? { label: 'Paid', cls: 'bg-emerald-50 text-emerald-700' }
+      : payStatus === 'failed'
+        ? { label: 'Failed', cls: 'bg-rose-50 text-rose-700' }
+        : { label: 'Pending', cls: 'bg-amber-50 text-amber-700' };
 
   return (
     <div className="min-h-screen bg-[#f4f6f5] pb-28">
@@ -599,6 +656,16 @@ const OrderDetail = () => {
               <p className="mt-1 font-bold text-slate-800">{paymentMode}</p>
             </div>
             <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment status</p>
+              {isCashOrder ? (
+                <p className="mt-1 font-bold text-slate-800">Cash on Delivery</p>
+              ) : (
+                <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-black ${payBadge.cls}`}>
+                  {payBadge.label}
+                </span>
+              )}
+            </div>
+            <div>
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Deliver to</p>
               <p className="mt-1 flex items-start gap-1.5 font-medium leading-5 text-slate-700">
                 <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
@@ -611,6 +678,26 @@ const OrderDetail = () => {
             </div>
           </div>
         </section>
+
+        {canPayNow && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[13px] font-black text-slate-900">Payment pending</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Complete the online payment to confirm this order.
+            </p>
+            <button
+              type="button"
+              onClick={handlePayNow}
+              disabled={payNowBusy}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-60"
+            >
+              {payNowBusy ? 'Opening payment…' : 'Pay now'}
+            </button>
+            {payError && (
+              <p className="mt-2 rounded-xl bg-rose-50 p-2.5 text-[11px] font-bold text-rose-600">{payError}</p>
+            )}
+          </section>
+        )}
 
         {canCancel && (
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
