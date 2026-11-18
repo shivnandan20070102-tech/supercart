@@ -22,6 +22,7 @@ import {
   verifyOrderOtp,
   getCustomerOtp,
   adminOverrideDeliver,
+  getDeliveryPartners,
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminLooseLimiter, generalLimiter, orderLimiter } from '../middleware/rateLimit.js';
@@ -76,6 +77,8 @@ router.route('/:id/verify-otp').post(protect, adminLooseLimiter, verifyOrderOtp)
 router.route('/:id/otp').get(protect, generalLimiter, getCustomerOtp);
 // Part A: Admin override deliver without OTP (reason mandatory + audit)
 router.route('/:id/admin-deliver-override').post(protect, adminLooseLimiter, adminOverrideDeliver);
+// Store/Admin panel: delivery partners (id+name+phone) for name resolution.
+router.route('/delivery/partners').get(protect, adminLooseLimiter, getDeliveryPartners);
 router.route('/:id').get(protect, generalLimiter, getOrderById);
 
 export default router;

@@ -814,6 +814,28 @@ export const verifyPaymentApi = async ({ orderId, razorpayOrderId, razorpayPayme
   return json;
 };
 
+// Store/Admin panel: delivery partners (id+name+phone) for partner-name
+// resolution. Backend SERVICE_ROLE client RLS bypass karta hai (store manager
+// direct users/delivery_profiles read nahi kar sakta).
+export const fetchDeliveryPartnersApi = async () => {
+  const token = await getFreshPackToken();
+  const base = String(API_BASE_URL || '').replace(/\/+$/, '');
+  const root = base.replace(/\/api$/, '');
+  const url = `${root}/api/delivery/partners`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch { /* ignore */ }
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.error || `Server error (${res.status})`);
+  }
+  return json?.partners || [];
+};
+
 export default {
   API_BASE_URL,
   PRODUCT_FETCH_TIMEOUT_MS,
@@ -828,6 +850,7 @@ export default {
   validateCouponApi,
   incrementCouponUsageApi,
   markOrderPackedApi,
+  fetchDeliveryPartnersApi,
   getPaymentsConfigApi,
   createPaymentOrderApi,
   verifyPaymentApi,

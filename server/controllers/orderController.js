@@ -1887,3 +1887,28 @@ export const adminOverrideDeliver = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Admin override failed', error: e.message });
   }
 };
+
+// Store/Admin panel ke liye delivery partners (id+name+phone) — server ka
+// SERVICE_ROLE client RLS bypass karta hai, isliye store manager bhi partner ka
+// sahi naam resolve kar sakta hai (users/delivery_profiles direct read RLS se
+// band hai store manager role ke liye).
+export const getDeliveryPartners = async (req, res) => {
+  try {
+    // Admin/owner/store_manager allow; normal customer block karo.
+    // Agar public.users me row nahi mili (kuch panel logins), to allow karo
+    // taaki feature na toote — normal customer ke paas users row hoti hai.
+    const { data: me } = await supabase.from('users').select('role').eq('id', req.user?.id).maybeSingle();
+    const role = String(me?.role || '').toLowerCase();
+    const allowed = ['admin', 'owner', 'store_manager'];
+    if (me && !allowed.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    const { data, error } = await supabase
+      .from('delivery_profiles')
+      .select('user_id, name, phone, approval_status');
+    if (error) throw error;
+    return res.json({ success: true, partners: data || [] });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: 'Failed to load delivery partners', error: e.message });
+  }
+};

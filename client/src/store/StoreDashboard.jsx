@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
-import { markOrderPackedApi } from '../services/api';
+import { markOrderPackedApi, fetchDeliveryPartnersApi } from '../services/api';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import BarcodeField from '../components/BarcodeField';
 import { barcodesMatch } from '../utils/barcodeVerify';
@@ -289,6 +289,27 @@ const StoreDashboard = () => {
           if (!partMap.get(String(p.user_id))?.name && p.name) {
             partMap.set(String(p.user_id), { ...(partMap.get(String(p.user_id)) || {}), name: p.name });
           }
+        }
+      }
+      // RLS ke karan store manager users/delivery_profiles direct read nahi kar
+      // sakta — backend (SERVICE_ROLE) se partner id+name+phone lao aur jo
+      // abhi bhi missing hain unhe fill karo (random-id fix).
+      if (partnerIds.length > 0) {
+        try {
+          const partners = await fetchDeliveryPartnersApi();
+          for (const p of partners || []) {
+            const pid = String(p?.user_id);
+            if (partnerIds.includes(pid)) {
+              const cur = partMap.get(pid) || {};
+              partMap.set(pid, {
+                ...cur,
+                name: cur.name || p?.name || '',
+                phone: cur.phone || p?.phone || '',
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('[StoreDashboard] partner fetch failed:', e?.message);
         }
       }
       setCustomersById(custMap);
