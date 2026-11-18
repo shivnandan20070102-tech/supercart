@@ -259,6 +259,23 @@ export const createOrder = async (req, res) => {
 
     const finalShipping = shippingAddress || shipping_address || shippingaddress || {};
     const finalPaymentMethod = paymentMethod || payment_method || 'Cash On Delivery';
+
+    // ---- Phone requirement (server-side enforce) ----
+    // Bina phone number ke koi bhi order nahi ban sakta: phone ya to logged-in
+    // user ke paas ho, ya shipping address mein given ho. Dono missing -> reject.
+    const registeredPhone = String(
+      req.user?.phone ?? req.user?.user_metadata?.phone ?? ''
+    ).trim();
+    const addressPhone = String(
+      finalShipping.phone || finalShipping.mobile || finalShipping.phone_number || ''
+    ).trim();
+    if (!registeredPhone && !addressPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please add your mobile number before placing an order.',
+        code: 'PHONE_REQUIRED',
+      });
+    }
     // CLIENT values — sirf fallback, trust nahi (price-tamper fix, genuine total same rahega)
     const clientItemsPrice = Number(itemsPrice ?? items_price ?? 0) || 0;
     const clientDeliveryFee = Number(deliveryFee ?? delivery_fee ?? 0) || 0;

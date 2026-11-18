@@ -24,6 +24,7 @@ import {
   QrCode,
   Smartphone,
   ChevronDown,
+  Phone,
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
@@ -89,7 +90,7 @@ const Cart = () => {
     originalSubtotal,
     savings,
   } = useCart();
-  const { user } = useAuth();
+  const { user, updateProfile } = useAuth();
   const { isOnline, serviceable, nearestStore, nearestLoading } = useStore();
   const { savedAddress } = useDeliveryAddress();
 
@@ -109,6 +110,11 @@ const Cart = () => {
   // don't create duplicate orders. Cleared on successful payment.
   const [pendingOnlineOrder, setPendingOnlineOrder] = useState(null);
   const onlinePaymentsEnabled = Boolean(paymentsConfig?.online_payments_enabled);
+  // Bina phone number ke order nahi — checkout se pehle number save karne ka prompt.
+  const [phonePromptOpen, setPhonePromptOpen] = useState(false);
+  const [phoneValue, setPhoneValue] = useState('');
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
 
   // Fetch payment config (public) so the online option is hidden when disabled.
   useEffect(() => {
@@ -500,6 +506,45 @@ const Cart = () => {
     }
   };
 
+  const proceedWithCheckout = () => {
+    setCheckoutError('');
+    setPaymentFailed(false);
+    if (normalizePaymentKey(paymentMethod) === 'cod') {
+      placeOrderCod();
+    } else {
+      placeOrderOnline();
+    }
+  };
+
+  const handleSavePhoneAndContinue = async () => {
+    const clean = phoneValue.trim();
+    if (!/^[6-9]\d{9}$/.test(clean)) {
+      setPhoneError('Kripya ek sahi 10-digit mobile number daalein.');
+      return;
+    }
+    setPhoneSaving(true);
+    setPhoneError('');
+    try {
+      const result = await updateProfile({
+        name: user?.name || '',
+        email: user?.email || '',
+        phone: clean,
+        location: user?.location || '',
+      });
+      if (!result.success) {
+        setPhoneError(result.message || 'Mobile number save nahi ho paya.');
+        return;
+      }
+      setPhonePromptOpen(false);
+      setPhoneValue('');
+      proceedWithCheckout();
+    } catch (e) {
+      setPhoneError(e?.message || 'Mobile number save nahi ho paya.');
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
   const handleCheckout = () => {
     if (!isOnline) {
       setCheckoutError('Store is currently closed, please check back later.');
@@ -511,16 +556,15 @@ const Cart = () => {
       return;
     }
     if (isCheckingOut) return;
+    // Bina phone number ke order allowed nahi — pehle number save karo.
+    if (user && !String(user.phone || '').trim()) {
+      setPhonePromptOpen(true);
+      return;
+    }
     // User gesture (click) ke andar hi audio unlock — warna autoplay policy
     // play() block kar deta hai aur success sound nahi bajta.
     unlockOrderAudio();
-    setCheckoutError('');
-    setPaymentFailed(false);
-    if (normalizePaymentKey(paymentMethod) === 'cod') {
-      placeOrderCod();
-    } else {
-      placeOrderOnline();
-    }
+    proceedWithCheckout();
   };
 
   if (orderPlaced) {
@@ -1107,6 +1151,59 @@ const Cart = () => {
 
       </div>
     </div>
+
+    {/* Phone required modal — bina phone number ke order nahi */}
+    {phonePromptOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <Phone className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="text-base font-black text-slate-900">Add your mobile number</h2>
+              <p className="text-[11px] font-medium text-slate-500">Required to place your order</p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Order place karne ke liye apna mobile number save karna zaroori hai. Delivery updates isi number par aayenge.
+          </p>
+          <input
+            type="tel"
+            inputMode="numeric"
+            maxLength={10}
+            value={phoneValue}
+            onChange={(e) => {
+              setPhoneValue(e.target.value.replace(/[^0-9]/g, '').slice(0, 10));
+              setPhoneError('');
+            }}
+            placeholder="10-digit mobile number"
+            className="mt-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm font-bold text-slate-800 outline-none placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
+          />
+          {phoneError && (
+            <p className="mt-2 rounded-xl bg-rose-50 p-2.5 text-[11px] font-bold text-rose-600">{phoneError}</p>
+          )}
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => { setPhonePromptOpen(false); setPhoneError(''); setPhoneValue(''); }}
+              disabled={phoneSaving}
+              className="rounded-xl border border-slate-300 py-3 text-sm font-black text-slate-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSavePhoneAndContinue}
+              disabled={phoneSaving}
+              className="rounded-xl bg-emerald-600 py-3 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {phoneSaving ? 'Saving…' : 'Save & Continue'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 };
