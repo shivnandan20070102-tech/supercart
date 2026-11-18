@@ -281,6 +281,16 @@ const StoreDashboard = () => {
         if (userIds.includes(u.id)) custMap.set(u.id, u);
         if (partnerIds.includes(String(u.id))) partMap.set(String(u.id), u);
       }
+      // Partner name users table me nahi mile to delivery_profiles se bharo,
+      // taaki store panel me random-id na dikhe (sahi naam dikhe).
+      if (partnerIds.length > 0) {
+        const profRes = await supabase.from('delivery_profiles').select('user_id,name').in('user_id', partnerIds);
+        for (const p of profRes.data || []) {
+          if (!partMap.get(String(p.user_id))?.name && p.name) {
+            partMap.set(String(p.user_id), { ...(partMap.get(String(p.user_id)) || {}), name: p.name });
+          }
+        }
+      }
       setCustomersById(custMap);
       setPartnersById(partMap);
     }
