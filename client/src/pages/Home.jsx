@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import ProductCard from '../components/grocery/ProductCard';
+import ProductCardSkeleton from '../components/grocery/ProductCardSkeleton';
 import OfferCarousel from '../components/home/OfferCarousel';
 import LoadingState, { OfflineNotice } from '../components/layout/LoadingState';
 import { fetchProducts, PRODUCT_FETCH_TIMEOUT_MS, BACKEND_WAKE_HINT_MS } from '../services/api';
@@ -333,17 +334,14 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
         <>
         {/* Empty Search / Filter State */}
         {loading && products.length === 0 ? (
-          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <LoadingState
-              label={waking ? 'Server start ho raha hai, thoda wait karein...' : 'Loading fresh products...'}
-              subLabel={
-                waking
-                  ? 'Hamara free server idle rehne par so jata hai — pehli baar 30-60 second lag sakte hain. Uske baad sab normal speed par chalega.'
-                  : ''
-              }
-            />
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-4 sm:gap-6">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <ProductCardSkeleton key={i} />
+              ))}
+            </div>
             {fetchTimedOut && (
-              <div className="flex justify-center pb-6">
+              <div className="flex justify-center mt-6">
                 <button
                   type="button"
                   onClick={() => setRetryKey((k) => k + 1)}
@@ -354,7 +352,7 @@ const Home = ({ searchQuery, selectedCategory, setSelectedCategory }) => {
                 </button>
               </div>
             )}
-          </div>
+          </>
         ) : error ? (
           <div className="bg-red-50 rounded-3xl border border-red-200 p-8 text-center max-w-lg mx-auto my-8">
             <h3 className="text-lg font-bold text-red-800">

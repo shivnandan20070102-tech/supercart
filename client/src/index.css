@@ -141,3 +141,22 @@ html.dark .shadow-sm, html.dark .shadow-xl { box-shadow: 0 10px 25px rgb(2 6 23 
 .sc-address-map .mapboxgl-ctrl-attrib {
   display: none !important;
 }
+
+/* ---- Skeleton loading shimmer (light gray, ~1.5s) ---- */
+@keyframes sc-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.sc-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgb(226 232 240 / 0.7) 25%,
+    rgb(241 245 249 / 1) 50%,
+    rgb(226 232 240 / 0.7) 75%
+  );
+  background-size: 200% 100%;
+  animation: sc-skeleton-shimmer 1.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sc-skeleton { animation: none; }
+}
