@@ -608,7 +608,6 @@ export const createOrder = async (req, res) => {
       return res.status(500).json({
         success: false,
         message: 'Order could not be placed in database',
-        error: error.message,
       });
     }
 
@@ -628,7 +627,6 @@ export const createOrder = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while creating order',
-      error: error.message,
     });
   }
 };
@@ -829,10 +827,10 @@ export const getOrderById = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('❌ [orders] get-one error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error fetching order',
-      error: error.message,
     });
   }
 };
@@ -893,10 +891,10 @@ export const acceptOrder = async (req, res) => {
       .single();
 
     if (updateError) {
+      console.error('❌ [orders] accept update error:', updateError.message);
       return res.status(500).json({
         success: false,
         message: 'Could not accept order',
-        error: updateError.message,
       });
     }
 
@@ -906,10 +904,10 @@ export const acceptOrder = async (req, res) => {
       data: updated,
     });
   } catch (error) {
+    console.error('❌ [orders] accept error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error accepting order',
-      error: error.message,
     });
   }
 };
@@ -953,10 +951,10 @@ export const rejectOrder = async (req, res) => {
       .single();
 
     if (updateError) {
+      console.error('❌ [orders] reject update error:', updateError.message);
       return res.status(500).json({
         success: false,
         message: 'Could not reject order',
-        error: updateError.message,
       });
     }
 
@@ -966,10 +964,10 @@ export const rejectOrder = async (req, res) => {
       data: updated,
     });
   } catch (error) {
+    console.error('❌ [orders] reject error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error rejecting order',
-      error: error.message,
     });
   }
 };
@@ -1005,10 +1003,10 @@ export const getMyOrders = async (req, res) => {
     const { data: orders, error } = await query;
 
     if (error) {
+      console.error('❌ [orders] myorders error:', error.message);
       return res.status(500).json({
         success: false,
         message: 'Failed to fetch orders',
-        error: error.message,
       });
     }
 
@@ -1019,10 +1017,10 @@ export const getMyOrders = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('❌ [orders] myorders server error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error fetching my orders',
-      error: error.message,
     });
   }
 };
@@ -1109,10 +1107,10 @@ export const assignDeliveryPartner = async (req, res) => {
         .select()
         .single();
       if (updateError) {
+        console.error('❌ [orders] unassign update error:', updateError.message);
         return res.status(500).json({
           success: false,
           message: 'Could not unassign delivery partner',
-          error: updateError.message,
         });
       }
       // Partner ka Online/Offline status touch nahi hota — wahi rahega jo
@@ -1184,10 +1182,10 @@ export const assignDeliveryPartner = async (req, res) => {
       .single();
 
     if (updateError) {
+      console.error('❌ [orders] assign update error:', updateError.message);
       return res.status(500).json({
         success: false,
         message: 'Could not assign delivery partner',
-        error: updateError.message,
       });
     }
 
@@ -1200,10 +1198,10 @@ export const assignDeliveryPartner = async (req, res) => {
       data: updated,
     });
   } catch (error) {
+    console.error('❌ [orders] assign error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error assigning delivery partner',
-      error: error.message,
     });
   }
 };
@@ -1365,7 +1363,6 @@ export const markOrderPacked = async (req, res) => {
         return res.status(500).json({
           success: false,
           message: 'Could not mark order as packed',
-          error: updateError.message,
         });
       }
       packed = updated;
@@ -1407,10 +1404,10 @@ export const markOrderPacked = async (req, res) => {
       assignSource,
     });
   } catch (error) {
+    console.error('❌ [pack] error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error marking order as packed',
-      error: error.message,
     });
   }
 };
@@ -1428,10 +1425,10 @@ export const getPendingAssignments = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('❌ [orders] pending list error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error fetching pending assignments',
-      error: error.message,
     });
   }
 };
@@ -1454,10 +1451,10 @@ export const retryPendingAssignments = async (req, res) => {
       ...result,
     });
   } catch (error) {
+    console.error('❌ [orders] retry-assign error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error retrying pending assignments',
-      error: error.message,
     });
   }
 };
@@ -1523,7 +1520,8 @@ export const cancelOrder = async (req, res) => {
 
     return res.status(200).json({ success: true, message: 'Order cancelled.', data: updated });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error cancelling order', error: error.message });
+    console.error('❌ [orders] cancel error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error cancelling order' });
   }
 };
 
@@ -1587,7 +1585,8 @@ export const reportDeliveryIssue = async (req, res) => {
     await restoreStockForCancelledOrder(updated.order_items || order.order_items);
     return res.status(200).json({ success: true, message: 'Delivery issue reported. Order marked return/refund.', data: updated });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error reporting issue', error: error.message });
+    console.error('❌ [orders] issue error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error reporting issue' });
   }
 };
 
@@ -1648,12 +1647,13 @@ export const submitOrderReview = async (req, res) => {
       if (/23505|order_reviews_once_per_order/.test(String(insErr.message || ''))) {
         return res.status(409).json({ success: false, message: 'This order has already been reviewed.', code: 'REVIEW_ALREADY_EXISTS' });
       }
-      return res.status(500).json({ success: false, message: 'Failed to save review', error: insErr.message });
+      return res.status(500).json({ success: false, message: 'Failed to save review' });
     }
 
     return res.status(201).json({ success: true, message: 'Review submitted.', data: inserted });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error submitting review', error: error.message });
+    console.error('❌ [orders] review error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error submitting review' });
   }
 };
 
@@ -1671,11 +1671,13 @@ export const getRefundOrderList = async (req, res) => {
       .in('status', ['cancelled', 'canceled', 'return_refund'])
       .order('created_at', { ascending: false });
     if (error) {
-      return res.status(500).json({ success: false, message: 'Failed to fetch refund orders', error: error.message });
+      console.error('❌ [orders] refund list error:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to fetch refund orders' });
     }
     return res.status(200).json({ success: true, count: orders?.length || 0, data: orders || [] });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error fetching refund orders', error: error.message });
+    console.error('❌ [orders] refund list server error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error fetching refund orders' });
   }
 };
 
@@ -1709,7 +1711,8 @@ export const markOrderRefunded = async (req, res) => {
     }
     return res.status(200).json({ success: true, message: 'Order marked as refunded.', data: updated });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error marking refunded', error: error.message });
+    console.error('❌ [orders] mark-refunded error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error marking refunded' });
   }
 };
 
@@ -1726,13 +1729,15 @@ export const getReviewsList = async (req, res) => {
       .select('*')
       .order('created_at', { ascending: false });
     if (error) {
-      return res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
+      console.error('❌ [orders] reviews list error:', error.message);
+      return res.status(500).json({ success: false, message: 'Failed to fetch reviews' });
     }
     const all = reviews || [];
     const avg = all.length ? all.reduce((s, r) => s + Number(r.rating || 0), 0) / all.length : 0;
     return res.status(200).json({ success: true, count: all.length, averageRating: Math.round(avg * 100) / 100, data: all });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Error fetching reviews', error: error.message });
+    console.error('❌ [orders] reviews list server error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error fetching reviews' });
   }
 };
 

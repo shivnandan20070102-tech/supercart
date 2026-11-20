@@ -178,7 +178,8 @@ export const createStoreManager = async (req, res) => {
           user_metadata: userMetadata,
         });
         if (passwordError) {
-          return res.status(400).json({ success: false, message: passwordError.message || 'Manager password could not be updated.' });
+          console.error('❌ [auth] manager password update error:', passwordError.message);
+          return res.status(400).json({ success: false, message: 'Manager password could not be updated.' });
         }
       }
       userId = existingAuthUser.id;
@@ -191,10 +192,8 @@ export const createStoreManager = async (req, res) => {
         user_metadata: userMetadata,
       });
       if (createError || !created?.user) {
-        const dbHint = /database error|new user/i.test(createError?.message || '')
-          ? ' (Supabase trigger/constraint issue)'
-          : '';
-        return res.status(400).json({ success: false, message: `${createError?.message || 'Manager account could not be created.'}${dbHint}` });
+        console.error('❌ [auth] manager create error:', createError?.message || 'unknown');
+        return res.status(400).json({ success: false, message: 'Manager account could not be created.' });
       }
       userId = created.user.id;
     }
@@ -251,11 +250,10 @@ export const createStoreManager = async (req, res) => {
       data: { id: userId, name: name.trim(), email: cleanEmail, storeId: parsedStoreId, existingAccount: Boolean(existingAuthUser) },
     });
   } catch (error) {
-    const detail = error?.message || 'Unknown error';
-    console.error(`Store manager creation failed during ${step}:`, detail);
+    console.error(`Store manager creation failed during ${step}:`, error?.message || 'unknown');
     return res.status(500).json({
       success: false,
-      message: `Manager account could not be created while ${step}: ${detail}`,
+      message: `Manager account could not be created while ${step}`,
     });
   }
 };
@@ -297,7 +295,7 @@ export const loginUser = async (req, res) => {
     console.error('Panel login server error:', error?.message || 'unknown error');
     res.status(500).json({
       success: false,
-      message: error?.message || 'Login failed.',
+      message: 'Login failed.',
     });
   }
 };
@@ -336,10 +334,10 @@ export const forgotPassword = async (req, res) => {
       message: 'If this email is registered, you will receive a reset link',
     });
   } catch (error) {
+    console.error('❌ [auth] forgot-password server error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Server error while requesting password reset',
-      error: error.message,
     });
   }
 };
@@ -361,6 +359,7 @@ export const getUserProfile = async (req, res) => {
 
     res.status(200).json({ success: true, data: user });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ [auth] profile server error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error fetching profile' });
   }
 };

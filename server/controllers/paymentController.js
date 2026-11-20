@@ -53,6 +53,22 @@ const loadOrder = async (id) => {
   }
 };
 
+// Payment de se sirf order ka owner (ya admin) hi jud sakta hai — koi aur
+// user kisi aur ke order ka payment create/verify na kar sake.
+const isOrderOwnerOrAdmin = async (req, order) => {
+  const uid = req.user?.id ? String(req.user.id) : '';
+  if (!uid) return false;
+  let role = '';
+  try {
+    if (uid) {
+      const { data: me } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
+      role = String(me?.role || '').toLowerCase();
+    }
+  } catch { /* role unknown — owner check neeche */ }
+  if (role === 'admin') return true;
+  return !!(order.user_id && String(order.user_id) === uid);
+};
+
 // Online order ka payment_status='paid' mark karo (paid_at + gateway ref bhi).
 // Razorpay columns (razorpay_order_id / razorpay_payment_id / gateway_ref /
 // paid_at) migration pending ho to graceful fallback — order kabhi stale
@@ -120,6 +136,9 @@ export const createOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
+    if (!(await isOrderOwnerOrAdmin(req, order))) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this order' });
+    }
     if (isCashOnDelivery(order.payment_method)) {
       return res.status(400).json({
         success: false,
@@ -130,9 +149,10 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Order is already paid.' });
     }
 
-    const amount = req.body?.amount != null ? toNumber(req.body.amount) : toNumber(order.total_price);
-    // Gateway stub — asli gateway me yahan SDK/HTTP call hoga.
-    const result = await createPaymentOrder({ ...order, amount });
+    // SECURITY: client-supplied amount hamesha ignore hota hai. Rakam sirf
+    // order.total_price se aati hai (paise me) — tamper-proof.
+    const amountPaise = Math.round(toNumber(order.total_price) * 100);
+    const result = await createPaymentOrder({ ...order, amount: amountPaise });
     if (!result?.ok) {
       return res.status(502).json({ success: false, message: 'Payment gateway could not create order.' });
     }
@@ -145,17 +165,17 @@ export const createOrder = async (req, res) => {
         gateway: result.gateway ?? 'razorpay',
         razorpay_order_id: result.orderId ?? null,
         key_id: result.keyId ?? null,
-        amount: Math.round(amount * 100) / 100,
+        amount: amountPaise / 100,
         currency: result.currency ?? 'INR',
         method: order.payment_method,
         is_online: true,
       },
     });
   } catch (error) {
+    console.error('❌ [pay] create-order error:', error.message);
     return res.status(500).json({
       success: false,
       message: 'Error creating payment order',
-      error: error.message,
     });
   }
 };
@@ -179,6 +199,9 @@ export const verifyPayment = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
+    if (!(await isOrderOwnerOrAdmin(req, order))) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this order' });
+    }
     if (isCashOnDelivery(order.payment_method)) {
       return res.status(400).json({
         success: false,
@@ -189,7 +212,7 @@ export const verifyPayment = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Order already paid.', data: order });
     }
 
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    const { razorpay_payment_id, razorpay_signature } = req.body || {};
     if (!razorpay_payment_id || !razorpay_signature) {
       return res.status(400).json({
         success: false,
@@ -197,18 +220,39 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
+    // SECURITY: razorpay_order_id client se kabhi mat lo — sirf DB me save hua
+    // razorpay_order_id valid hai. Client bheje to ignore hota hai.
+    const dbRzpOrderId = order.razorpay_order_id?.toString();
+    if (!dbRzpOrderId) {
+      return res.status(400).json({ success: false, message: 'No Razorpay order on record for this order' });
+    }
+
+    // SECURITY: ek hi razorpay_payment_id alag orders par reuse na ho sake.
+    try {
+      const { data: reused } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('razorpay_payment_id', String(razorpay_payment_id))
+        .neq('id', order.id)
+        .maybeSingle();
+      if (reused) {
+        return res.status(400).json({ success: false, message: 'Payment reference already used on another order' });
+      }
+    } catch { /* ignore lookup err — verify neeche decide karta hai */ }
+
     // Verify with Razorpay: HMAC signature + fetched payment (captured,
     // matching order_id, matching amount). Any mismatch => 400, never paid.
     let vResult;
     try {
       vResult = await verifyRazorpayPayment({
-        orderId: String(razorpay_order_id ?? order.id),
+        orderId: dbRzpOrderId,
         paymentId: razorpay_payment_id,
         signature: razorpay_signature,
         expectedAmountRs: order.total_price,
       });
     } catch (error) {
-      return res.status(400).json({ success: false, message: error.message });
+      console.error('❌ [pay] verify exception:', error.message);
+      return res.status(400).json({ success: false, message: 'Payment verification failed.' });
     }
     if (!vResult?.ok) {
       return res.status(400).json({
@@ -220,7 +264,7 @@ export const verifyPayment = async (req, res) => {
 
     const updated = await markOrderPaid(order, {
       paymentId: razorpay_payment_id,
-      rzpOrderId: razorpay_order_id ?? order.id,
+      rzpOrderId: dbRzpOrderId,
     });
 
     return res.status(200).json({
@@ -229,10 +273,10 @@ export const verifyPayment = async (req, res) => {
       data: updated,
     });
   } catch (error) {
+    console.error('❌ [pay] verify error:', error.message);
     return res.status(500).json({
       success: false,
       message: 'Error verifying payment',
-      error: error.message,
     });
   }
 };
@@ -307,10 +351,10 @@ export const paymentWebhook = async (req, res) => {
       data: updated,
     });
   } catch (error) {
+    console.error('❌ [pay] webhook error:', error.message);
     return res.status(500).json({
       success: false,
       message: 'Webhook processing error',
-      error: error.message,
     });
   }
 };

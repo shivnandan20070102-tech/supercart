@@ -64,10 +64,10 @@ export const submitComplaint = async (req, res) => {
     }
 
     if (error) {
+      console.error('❌ [complaint] submit error:', error.message);
       return res.status(500).json({
         success: false,
         message: 'Could not submit complaint. Please try again.',
-        error: error.message,
       });
     }
 
@@ -77,10 +77,10 @@ export const submitComplaint = async (req, res) => {
       data,
     });
   } catch (error) {
+    console.error('❌ [complaint] submit server error:', error.message);
     return res.status(500).json({
       success: false,
       message: 'Server error while submitting complaint',
-      error: error.message,
     });
   }
 };
@@ -100,11 +100,13 @@ export const getMyComplaints = async (req, res) => {
       .eq('complainant_id', String(userId))
       .order('created_at', { ascending: false });
     if (error) {
-      return res.status(500).json({ success: false, message: 'Could not fetch complaints', error: error.message });
+      console.error('❌ [complaint] fetch error:', error.message);
+      return res.status(500).json({ success: false, message: 'Could not fetch complaints' });
     }
     return res.status(200).json({ success: true, data: data || [] });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error while fetching complaints', error: error.message });
+    console.error('❌ [complaint] fetch server error:', error.message);
+    return res.status(500).json({ success: false, message: 'Server error while fetching complaints' });
   }
 };
 
