@@ -87,15 +87,17 @@ BEGIN
      OR p_vehicle_type IS NULL OR length(trim(p_vehicle_type)) < 2
      OR p_vehicle_number IS NULL OR length(trim(p_vehicle_number)) < 3
      OR p_emergency_contact IS NULL OR length(trim(p_emergency_contact)) < 7
-     OR p_home_store_id IS NULL
-     OR NOT EXISTS (SELECT 1 FROM public.stores WHERE id = p_home_store_id)
-     OR NOT public.delivery_document_is_valid(p_profile_photo_url, false)
-     OR NOT public.delivery_document_is_valid(p_aadhar_card_url, true)
-     OR NOT public.delivery_document_is_valid(p_driving_license_url, true)
-     OR NOT public.delivery_document_is_valid(p_pan_card_url, true)
-     OR NOT public.delivery_document_is_valid(p_bike_image_url, false)
+     OR (p_request_approval AND (
+            p_home_store_id IS NULL
+            OR NOT EXISTS (SELECT 1 FROM public.stores WHERE id = p_home_store_id)
+            OR NOT public.delivery_document_is_valid(p_profile_photo_url, false)
+            OR NOT public.delivery_document_is_valid(p_aadhar_card_url, true)
+            OR NOT public.delivery_document_is_valid(p_driving_license_url, true)
+            OR NOT public.delivery_document_is_valid(p_pan_card_url, true)
+            OR NOT public.delivery_document_is_valid(p_bike_image_url, false)
+         ))
   THEN
-    RAISE EXCEPTION 'Profile, Home Store and all valid documents are required';
+    RAISE EXCEPTION 'Complete profile details are required (Home Store and all documents are required for first-time / resubmission)'
   END IF;
 
   PERFORM set_config('app.delivery_profile_submit', 'on', true);
