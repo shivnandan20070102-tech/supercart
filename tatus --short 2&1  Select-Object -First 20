@@ -1,0 +1,15 @@
+[33md8098c9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/cancel-refund-review[m[33m, [m[1;31morigin/feature/cancel-refund-review[m[33m)[m fix: delivery profile RPC policy drops + profile save error handling
+[33mf2a924d[m feat: delivery flow with COD + OTP + checkout payment pages
+[33m9b27a1d[m Add order cancel/refund/review system (customer, delivery, admin UI)
+[33m135c16a[m Add cancel/refund/review SQL migration + rollback (feature branch)
+[33mfced2da[m[33m ([m[1;31morigin/restore-old-auth[m[33m, [m[1;32mrestore-old-auth[m[33m)[m Fix delivery partner signup and manager creation constraints
+[33mfdee457[m Fix delivery partner signup and manager creation constraints
+[33m05c26b9[m fix(signup): use absolute backend URL in signUpWithEmail to stop generic 'Account could not be created' error
+[33m07c93a7[m Add real Supabase error logging to signup (AuthContext, DeliverySignup, authController)
+[33me166dcd[m Fix restore guard self-trigger exclusion and update checks comment
+[33me5c88d4[m Restructure restore SQL: 00_checks read-only file, original 5abbc1a trigger, guard, policies
+[33m7ce75e7[m Archive role-system SQL
+[33m964f090[m Add restore and rollback SQL for old auth
+[33m79f194b[m Remove tagged-email leftovers, restore plain email auth in client
+[33mb9e117b[m Add clean auth role migration copy
+[33mba5799f[m Add auth role system rebuild migration

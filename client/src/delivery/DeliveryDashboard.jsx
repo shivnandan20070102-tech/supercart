@@ -361,8 +361,10 @@ const DeliveryDashboard = () => {
       return;
     }
 
-    const activeStatuses = new Set(['assigned', 'accepted', 'reached_store', 'picked_up', 'reached_customer', 'out_for_delivery']);
-    const customerIds = [...new Set((data || []).filter((order) => activeStatuses.has(String(order.status || '').toLowerCase())).map((order) => order.user_id).filter(Boolean))];
+    // Customer info HAR order ke liye load karo (active + history dono),
+    // taaki Order History mein bhi sahi customer naam dikhe (naam ki jagah
+    // fallback ke bajaye asli user ka naam).
+    const customerIds = [...new Set((data || []).map((order) => order.user_id).filter(Boolean))];
     let customers = [];
     if (customerIds.length > 0) {
       const { data: customerRows, error: customersError } = await supabase
@@ -1180,6 +1182,23 @@ const DeliveryDashboard = () => {
           <h1 className="mt-4 text-2xl font-black">Gigs</h1>
           <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">Extra delivery tasks will appear here when they are available in your area.</p>
         </section>
+      ) : activeTab === 'history' ? (
+        <section className="rounded-2xl border border-slate-800 bg-slate-950/90 p-4 shadow-sm backdrop-blur-sm sm:p-6">
+          <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">{t.brand}</p>
+          <h1 className="mt-2 text-3xl font-black">Order History</h1>
+          <p className="mt-1 text-sm text-slate-400">Your completed deliveries and past orders.</p>
+          {historyOrders.length > 0 ? (
+            <div className="mt-6 space-y-4">
+              {historyOrders.map((order) => renderOrderCard(order))}
+            </div>
+          ) : (
+            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-10 text-center">
+              <ClipboardList className="mx-auto h-10 w-10 text-emerald-400" />
+              <p className="mt-3 text-sm font-bold text-slate-400">No completed deliveries yet.</p>
+              <p className="mt-1 text-xs text-slate-500">Delivered and cancelled orders will appear here.</p>
+            </div>
+          )}
+        </section>
       ) : (
         <section className="rounded-2xl border border-slate-800 bg-slate-950/90 p-6 shadow-sm backdrop-blur-sm">
           <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">{t.brand}</p>
@@ -1212,7 +1231,7 @@ const DeliveryDashboard = () => {
               onClick={() => {
                 if (key === 'pocket') navigate('/delivery/pocket');
                 else if (key === 'profile') navigate('/delivery/profile');
-                else setActiveTab(key === 'orders' ? 'feed' : key);
+                else setActiveTab(key === 'orders' ? 'history' : key);
               }}
               className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[11px] font-black transition ${activeTab === key ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
             >
