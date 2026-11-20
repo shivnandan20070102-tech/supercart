@@ -32,7 +32,6 @@ export const getProducts = async (req, res) => {
       return res.status(500).json({
         success: false,
         message: 'Failed to retrieve store products',
-        error: error.message,
       });
     }
 
@@ -43,10 +42,10 @@ export const getProducts = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('❌ [products] list error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve products from database',
-      error: error.message,
     });
   }
 };
@@ -85,10 +84,10 @@ export const getProductById = async (req, res) => {
       source: 'supabase_cloud_database',
     });
   } catch (error) {
+    console.error('❌ [products] get-one error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error fetching product',
-      error: error.message,
     });
   }
 };

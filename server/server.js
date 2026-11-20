@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import helmet from 'helmet';
 import morgan from 'morgan';
 import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
@@ -33,6 +34,10 @@ dotenv.config();
 getJwtSecret();
 
 const app = express();
+
+// Helmet — secure HTTP headers (CSP intentionally NOT set — Razorpay/Supabase
+// third-party scripts break with a strict default CSP).
+app.use(helmet());
 
 // Abandoned online orders (payment_status pending/failed) older than 20 minutes
 // are safely auto-cancelled. Only online (non-COD) orders still in the store
@@ -104,6 +109,8 @@ app.use(express.urlencoded({ extended: true }));
 // Extra domain chahiye to Render env me: CORS_ALLOWED_ORIGINS=https://a.com,https://b.com
 const CORS_DEFAULT_ORIGINS = [
   'https://supercart-iota.vercel.app', // Live Vercel frontend
+  'https://supercart.me', // custom domain
+  'https://www.supercart.me', // custom domain www
   'http://localhost:5173', // Vite dev
   'http://localhost:3000', // CRA/alt dev
   'http://localhost:5000', // local backend self-check
@@ -112,9 +119,9 @@ const CORS_ENV_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-// Vercel preview deployments (supercart-*.vercel.app) bhi allow — exact
-// production domain upar list me hai, ye sirf preview/test builds ke liye.
-const CORS_PREVIEW_PATTERN = /\.vercel\.app$/;
+// Vercel preview deployments — strictly only our own preview project pattern
+// (supercart-*-supercart1.vercel.app). NO wildcard .vercel.app bypass.
+const CORS_PREVIEW_PATTERN = /^https:\/\/supercart-.*-supercart1\.vercel\.app$/;
 const corsOptions = {
   origin: (origin, callback) => {
     // Origin header nahi (curl, mobile apps, server-to-server) — allow.

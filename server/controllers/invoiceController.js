@@ -123,7 +123,8 @@ export const getOrderInvoice = async (req, res) => {
     res.setHeader('Content-Length', String(pdf.length));
     return res.status(200).send(pdf);
   } catch (e) {
-    return res.status(500).json({ success: false, message: 'Could not generate invoice', error: e.message });
+    console.error('❌ [invoice] generate error:', e.message);
+    return res.status(500).json({ success: false, message: 'Could not generate invoice' });
   }
 };
 
@@ -183,6 +184,36 @@ export const updateOrderStatus = async (req, res) => {
     const { data: order, error: fetchError } = await supabase.from('orders').select('*').eq('id', id).single();
     if (fetchError || !order) return res.status(404).json({ success: false, message: 'Order not found' });
 
+    // ACCESS CONTROL: sirf admin + apne store ke store_manager + assigned delivery
+    // partner status update kar sakte hain. Customer (owner) aur kisi aur
+    // delivery partner / role ko 403 — data integrity + hijack guard.
+    const uid = req.user?.id ? String(req.user.id) : '';
+    let role = '';
+    try {
+      if (uid) {
+        const { data: me } = await supabase.from('users').select('role').eq('id', uid).maybeSingle();
+        role = String(me?.role || '').toLowerCase();
+      }
+    } catch { /* role unknown — neeche deny */ }
+    let allowed = role === 'admin';
+    if (!allowed) {
+      if (role === 'store_manager' && order.store_id != null && uid) {
+        try {
+          const { data: links } = await supabase
+            .from('store_staff')
+            .select('store_id')
+            .eq('user_id', uid);
+          const ids = (links || []).map((r) => Number(r.store_id));
+          if (ids.includes(Number(order.store_id))) allowed = true;
+        } catch { /* deny */ }
+      } else if (role === 'delivery_partner' && order.delivery_boy_id && uid) {
+        if (String(order.delivery_boy_id) === uid) allowed = true;
+      }
+    }
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: 'Not authorized to update this order status' });
+    }
+
     // PACK-FIRST GATE: unpacked order seedha assigned/accepted/picked_up/
     // out_for_delivery/delivered nahi ho sakta — pehle store pack kare.
     if (isStoreQueueStatus(order.status) && FORWARD_AFTER_PACK.has(normalizeStatusKey(nextStatus))) {
@@ -197,7 +228,8 @@ export const updateOrderStatus = async (req, res) => {
     const { data: updated, error: updateError } = await supabase
       .from('orders').update({ status: nextStatus }).eq('id', id).select().single();
     if (updateError) {
-      return res.status(500).json({ success: false, message: 'Could not update order status', error: updateError.message });
+      console.error(`❌ [invoice] status update fail order #${id}:`, updateError.message);
+      return res.status(500).json({ success: false, message: 'Could not update order status' });
     }
 
     let email = null;
@@ -206,7 +238,8 @@ export const updateOrderStatus = async (req, res) => {
     }
     return res.status(200).json({ success: true, message: 'Order status updated', data: updated, email });
   } catch (e) {
-    return res.status(500).json({ success: false, message: 'Error updating order status', error: e.message });
+    console.error('❌ [invoice] updateOrderStatus error:', e.message);
+    return res.status(500).json({ success: false, message: 'Error updating order status' });
   }
 };
 
@@ -224,7 +257,8 @@ export const sendInvoiceEmailEndpoint = async (req, res) => {
     const result = await sendDeliveredInvoiceEmail(id);
     return res.status(200).json({ success: true, message: result.sent ? 'Invoice emailed' : 'Invoice generated, email skipped', email: result });
   } catch (e) {
-    return res.status(500).json({ success: false, message: 'Could not send invoice email', error: e.message });
+    console.error('❌ [invoice] send email error:', e.message);
+    return res.status(500).json({ success: false, message: 'Could not send invoice email' });
   }
 };
 
