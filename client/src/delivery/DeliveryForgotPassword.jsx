@@ -8,7 +8,7 @@ const DeliveryForgotPassword = () => {
   const [message, setMessage] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  const deliveryResetRedirectUrl = import.meta.env.VITE_DELIVERY_RESET_REDIRECT_URL || 'http://localhost:5173/delivery/reset-password';
+  const deliveryResetRedirectUrl = import.meta.env.VITE_DELIVERY_RESET_REDIRECT_URL || `${window.location.origin}/delivery/reset-password`;
 
   const submit = async (event) => {
     event.preventDefault();

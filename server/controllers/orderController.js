@@ -695,7 +695,7 @@ export const transitionDeliveryStatus = async (req, res) => {
     const currentIndex = DELIVERY_STATUS_FLOW.indexOf(current);
     const nextIndex = DELIVERY_STATUS_FLOW.indexOf(requested);
     const acceptingAssigned = current === 'assigned' && requested === 'accepted';
-    if ((!acceptingAssigned && nextIndex !== currentIndex + 1) || requested === 'delivered') {
+    if (!acceptingAssigned && nextIndex !== currentIndex + 1) {
       return res.status(400).json({ success: false, message: 'Only the next delivery step is allowed.' });
     }
     const { data: updated, error: updateError } = await supabase.from('orders')
