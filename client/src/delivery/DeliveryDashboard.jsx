@@ -1233,7 +1233,7 @@ const DeliveryDashboard = () => {
                 else if (key === 'profile') navigate('/delivery/profile');
                 else setActiveTab(key === 'orders' ? 'history' : key);
               }}
-              className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[11px] font-black transition ${activeTab === key ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
+              className={`flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[11px] font-black transition ${(key === 'orders' ? activeTab === 'history' : activeTab === key) ? 'bg-emerald-500 text-slate-950' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
             >
               <Icon className="h-5 w-5" />
               {label}
