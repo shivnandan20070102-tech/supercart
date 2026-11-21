@@ -331,11 +331,36 @@ const DeliveryProfile = () => {
       return;
     }
     try {
-      const profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
+      let profilePhotoUrl;
+      try {
+        profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
+      } catch (error) {
+        console.error('Profile photo upload error:', error);
+        const raw = String(error?.message || error || '');
+        setNotice({
+          type: 'error',
+          text: /failed to fetch|networkerror|load failed/i.test(raw)
+            ? 'Save failed — could not reach the server. Check your internet connection and try again.'
+            : `Profile photo upload failed: ${raw}`,
+        });
+        return;
+      }
       if (isFirstSetup) {
         // First-time / resubmission: full application (home store + documents + approval request).
         const urls = {};
-        for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
+        try {
+          for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
+        } catch (error) {
+          console.error('Document upload error:', error);
+          const raw = String(error?.message || error || '');
+          setNotice({
+            type: 'error',
+            text: /failed to fetch|networkerror|load failed/i.test(raw)
+              ? 'Save failed — could not reach the server. Check your internet connection and try again.'
+              : `Document upload failed: ${raw}`,
+          });
+          return;
+        }
         const { error } = await supabase.rpc('submit_delivery_profile', {
           p_name: form.name.trim(),
           p_phone: form.phone.trim(),
@@ -377,20 +402,18 @@ const DeliveryProfile = () => {
         setNotice({ type: 'success', text: 'Profile saved successfully.' });
       }
     } catch (error) {
-      console.error('Save delivery profile error:', {
+      console.error('Save delivery profile RPC error:', {
         message: error?.message ?? error,
         code: error?.code,
         details: error?.details,
       });
       const raw = String(error?.message || error || '');
-      // Real network failure (CORS / server unreachable / RPC missing) shows a generic
-      // message; anything else shows the actual cause so it is debuggable.
       const isNetwork = /failed to fetch|networkerror|load failed/i.test(raw);
       setNotice({
         type: 'error',
         text: isNetwork
           ? 'Save failed — could not reach the server. Check your internet connection and try again.'
-          : (raw || 'Could not save profile.'),
+          : `Profile RPC failed: ${error?.code ? `${error.code} ` : ''}${raw}`,
       });
     } finally { setSaving(false); }
   };
@@ -472,7 +495,7 @@ const DeliveryProfile = () => {
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-emerald-300"><LoaderCircle className="h-6 w-6 animate-spin" /></div>;
 
   return <div className={`delivery-profile min-h-screen px-4 py-8 sm:px-8 ${settings.darkTheme ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'}`}><div className="mx-auto max-w-4xl">
-    <header className="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">SuperCart Delivery</p><h1 className="mt-2 text-3xl font-black">Delivery Profile</h1></div><div className="flex flex-wrap items-center gap-2"><Link to="/delivery" className="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-bold text-slate-300 hover:border-emerald-500 hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to orders</Link><button type="button" onClick={logout} className="flex items-center gap-2 rounded-xl border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm font-bold text-rose-300 hover:bg-rose-900 hover:text-white"><LogOut className="h-4 w-4" /> Logout</button></div></header>
+    <header className="mb-8 flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-400">SuperCart Delivery</p><h1 className="mt-2 text-3xl font-black">{isFirstSetup ? 'Signup Delivery Profile' : 'Delivery Profile'}</h1></div><div className="flex flex-wrap items-center gap-2"><Link to="/delivery" className="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-bold text-slate-300 hover:border-emerald-500 hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to orders</Link><button type="button" onClick={logout} className="flex items-center gap-2 rounded-xl border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm font-bold text-rose-300 hover:bg-rose-900 hover:text-white"><LogOut className="h-4 w-4" /> Logout</button></div></header>
     {notice.text && <div className={`mb-5 flex items-center gap-2 rounded-xl p-3 text-sm font-bold ${notice.type === 'error' ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'}`}>{notice.type === 'success' && <CheckCircle2 className="h-4 w-4" />}{notice.text}</div>}
     {!isFirstSetup && (<div>
     <AccordionSection id="activity" title="Activity & Earnings" icon={Wallet} openSection={openSection} setOpenSection={setOpenSection}>
