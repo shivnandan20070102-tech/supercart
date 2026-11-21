@@ -1,0 +1,10 @@
+[33m7d6eaca[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfix/delivery-profile-save[m[33m, [m[1;31morigin/fix/delivery-profile-save[m[33m)[m fix: delivery profile save, hide area/documents for approved partners, lock name/phone/vehicle number
+[33m2e318d6[m[33m ([m[1;31morigin/fix/security-round2[m[33m, [m[1;32mfix/security-round2[m[33m)[m delivery profilr setup
+[33mda44226[m deliery boy order save
+[33m09ef0a6[m fix: allow delivered status transition in delivery-status endpoint
+[33m4ee85ed[m add delivert=y boy order history saving
+[33m2b969e3[m fix: security round 2 (order status auth, payment ownership, helmet, CORS, cleanup)
+[33me7b6e5e[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m fix: resolve delivery partner name in store dashboard via backend service-role endpoint
+[33mf574367[m fix: resolve delivery partner name from delivery_profiles in store dashboard
+[33m5596a43[m feat: admin - per-user orders details button + modal
+[33m48d6182[m feat: require phone number before placing order (client + server)
