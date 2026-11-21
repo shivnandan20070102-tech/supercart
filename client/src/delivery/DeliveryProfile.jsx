@@ -94,6 +94,9 @@ const DeliveryProfile = () => {
   // Original (DB) values of the locked fields — used to decide whether a
   // field may be filled once (empty in DB) or is truly locked (already set).
   const [origValues, setOrigValues] = useState({ name: '', phone: '', vehicle_number: '' });
+  // Field-level errors — profile photo aur har document ke input ke neeche dikhte hain.
+  const [fieldErrors, setFieldErrors] = useState({});
+  const setFieldError = (key, msg) => setFieldErrors((prev) => ({ ...prev, [key]: msg || '' }));
   const [settings, setSettings] = useState({
     darkTheme: true,
     appLanguage: 'English',
@@ -184,14 +187,17 @@ const DeliveryProfile = () => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       setNotice({ type: 'error', text: 'Profile photo must be an image.' });
+      setFieldError('profilePhoto', '');
       event.target.value = '';
       return;
     }
+    // Badi image ko yahan reject NAHI karte — save par auto-resize (max 1600px,
+    // JPEG) use 3MB se chhoti kar dega. Sirf tab error dikhega jab resize ke
+    // baad bhi 3MB se upar rahe.
     if (file.size > MAX_FILE_SIZE) {
-      setNotice({ type: 'error', text: 'File size must be smaller than 3MB' });
-      event.target.value = '';
-      return;
+      console.log('[DelProfile] large image selected, will be resized:', file.size);
     }
+    setFieldError('profilePhoto', '');
     setProfilePhoto(file);
     setProfilePhotoPreview(URL.createObjectURL(file));
   };
@@ -203,14 +209,18 @@ const DeliveryProfile = () => {
     const isPdf = file.type === 'application/pdf';
     if (!isImage && (!isPdf || key === 'bike_image_url')) {
       setNotice({ type: 'error', text: 'Only image or PDF files are allowed; bike image must be an image.' });
+      setFieldError(key, 'Only image or PDF files are allowed; bike image must be an image.');
       event.target.value = '';
       return;
     }
-    if (file.size > MAX_FILE_SIZE) {
-      setNotice({ type: 'error', text: 'File size must be smaller than 3MB' });
+    // PDF ka 3MB limit yahan hi dikhao; image ko resize par chhota karenge.
+    if (isPdf && file.size > MAX_FILE_SIZE) {
+      setNotice({ type: 'error', text: 'PDF 3 MB se badi hai — chhoti PDF ya photo lagao' });
+      setFieldError(key, 'PDF 3 MB se badi hai — chhoti PDF ya photo lagao');
       event.target.value = '';
       return;
     }
+    setFieldError(key, '');
     setFiles((current) => ({ ...current, [key]: file }));
     setPreviews((current) => ({ ...current, [key]: file.type.startsWith('image/') ? URL.createObjectURL(file) : '' }));
   };
@@ -235,15 +245,15 @@ const DeliveryProfile = () => {
         const tryQuality = (quality) =>
           new Promise((res) => canvas.toBlob((blob) => res(blob), 'image/jpeg', quality));
         (async () => {
-          let blob = await tryQuality(0.8);
-          if (blob && blob.size > 2.5 * 1024 * 1024) {
-            blob = await tryQuality(0.6);
+          let blob = null;
+          // Quality kam karte jao jab tak size 3MB se neeche na aa jaye
+          // (policy limit 3145728 bytes hai — 2.5MB buffer rakhe hain).
+          for (const q of [0.8, 0.6, 0.45, 0.3, 0.2, 0.15]) {
+            blob = await tryQuality(q);
+            if (blob && blob.size <= 2.5 * 1024 * 1024) break;
           }
-          if (blob && blob.size > 2.5 * 1024 * 1024) {
-            blob = await tryQuality(0.45);
-          }
-          if (!blob) {
-            reject(new Error('Image convert nahi hui — dobara try karo'));
+          if (!blob || blob.size > 3145728) {
+            reject(new Error('Image compress nahi hui — chhoti photo lagao'));
             return;
           }
           const resized = new File([blob], (file.name.replace(/\.[^.]+$/, '') || 'photo') + '.jpg', {
@@ -305,6 +315,11 @@ const DeliveryProfile = () => {
     }
     const fileToUpload = prepared.file;
     const extension = prepared.extension;
+    // Storage policy limit 3145728 bytes hai — upload se pehle final guard:
+    // agar kisi bhi kaaran se file abhi bhi 3MB se badi hai to clear error.
+    if (fileToUpload.size > 3145728) {
+      throw new Error(extension === 'pdf' ? 'PDF 3 MB se badi hai — chhoti PDF ya photo lagao' : 'Photo 3 MB se badi hai — chhoti photo lagao');
+    }
     const path = `${authUser.id}/${folder}.${extension}`;
     const contentType = extension === 'pdf' ? 'application/pdf' : 'image/jpeg';
     const { error } = await supabase.storage.from('delivery-documents').upload(path, fileToUpload, { upsert: true, contentType, cacheControl: '3600' });
@@ -435,12 +450,11 @@ const DeliveryProfile = () => {
         console.error('Profile photo upload error:', error);
         const raw = String(error?.message || error || '');
         const offlineNetwork = typeof navigator !== 'undefined' && navigator.onLine === false;
-        setNotice({
-          type: 'error',
-          text: offlineNetwork
-            ? 'Save failed — could not reach the server. Check your internet connection and try again.'
-            : `Profile photo upload failed: ${raw}`,
-        });
+        const msg = offlineNetwork
+          ? 'Save failed — could not reach the server. Check your internet connection and try again.'
+          : `Profile photo upload failed: ${raw}`;
+        setFieldError('profilePhoto', msg);
+        setNotice({ type: 'error', text: msg });
         return;
       }
       if (isFirstSetup) {
@@ -452,12 +466,11 @@ const DeliveryProfile = () => {
           console.error('Document upload error:', error);
           const raw = String(error?.message || error || '');
           const offlineNetwork = typeof navigator !== 'undefined' && navigator.onLine === false;
-          setNotice({
-            type: 'error',
-            text: offlineNetwork
-              ? 'Save failed — could not reach the server. Check your internet connection and try again.'
-              : `Document upload failed: ${raw}`,
-          });
+          const docMsg = offlineNetwork
+            ? 'Save failed — could not reach the server. Check your internet connection and try again.'
+            : `Document upload failed: ${raw}`;
+          setFieldError(document.key, docMsg);
+          setNotice({ type: 'error', text: docMsg });
           return;
         }
         const { error } = await supabase.rpc('submit_delivery_profile', {
@@ -660,7 +673,7 @@ const DeliveryProfile = () => {
     </div>)}
     <form onSubmit={saveProfile} className="space-y-6">
       <AccordionSection id="personal" title="Profile" icon={UserRound} openSection={openSection} setOpenSection={setOpenSection}>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Complete your delivery partner profile.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} readOnly={lockName} disabled={lockName} onChange={(event) => setForm({ ...form, name: event.target.value })} className={`${inputClass} ${lockName ? 'cursor-not-allowed opacity-60' : ''}`} />{lockName && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} readOnly={lockPhone} disabled={lockPhone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={`${inputClass} ${lockPhone ? 'cursor-not-allowed opacity-60' : ''}`} />{lockPhone && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label><label className="text-xs font-bold text-slate-300">Vehicle Type<input required name="vehicle_type" value={form.vehicle_type} onChange={(event) => setForm({ ...form, vehicle_type: event.target.value })} className={inputClass} placeholder="Bike, scooter, etc." /></label><label className="text-xs font-bold text-slate-300">Vehicle Number<input required name="vehicle_number" value={form.vehicle_number} readOnly={lockVehicleNumber} disabled={lockVehicleNumber} onChange={(event) => setForm({ ...form, vehicle_number: event.target.value.toUpperCase() })} className={`${inputClass} ${lockVehicleNumber ? 'cursor-not-allowed opacity-60' : ''}`} placeholder="DL 01 AB 1234" />{lockVehicleNumber && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300 sm:col-span-2">Emergency Contact<input required name="emergency_contact" value={form.emergency_contact} onChange={(event) => setForm({ ...form, emergency_contact: event.target.value })} className={inputClass} placeholder="Name and phone number" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Complete your delivery partner profile.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} readOnly={lockName} disabled={lockName} onChange={(event) => setForm({ ...form, name: event.target.value })} className={`${inputClass} ${lockName ? 'cursor-not-allowed opacity-60' : ''}`} />{lockName && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} readOnly={lockPhone} disabled={lockPhone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={`${inputClass} ${lockPhone ? 'cursor-not-allowed opacity-60' : ''}`} />{lockPhone && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label>{fieldErrors.profilePhoto && <p className="mt-1 text-[11px] font-bold text-rose-400">{fieldErrors.profilePhoto}</p>}<label className="text-xs font-bold text-slate-300">Vehicle Type<input required name="vehicle_type" value={form.vehicle_type} onChange={(event) => setForm({ ...form, vehicle_type: event.target.value })} className={inputClass} placeholder="Bike, scooter, etc." /></label><label className="text-xs font-bold text-slate-300">Vehicle Number<input required name="vehicle_number" value={form.vehicle_number} readOnly={lockVehicleNumber} disabled={lockVehicleNumber} onChange={(event) => setForm({ ...form, vehicle_number: event.target.value.toUpperCase() })} className={`${inputClass} ${lockVehicleNumber ? 'cursor-not-allowed opacity-60' : ''}`} placeholder="DL 01 AB 1234" />{lockVehicleNumber && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300 sm:col-span-2">Emergency Contact<input required name="emergency_contact" value={form.emergency_contact} onChange={(event) => setForm({ ...form, emergency_contact: event.target.value })} className={inputClass} placeholder="Name and phone number" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
       </AccordionSection>
       {/* Home Area step SIRF pehli-baari setup me — approve ke baad wale Profile page par hidden */}
       {isFirstSetup && (
@@ -772,6 +785,7 @@ const DeliveryProfile = () => {
                     placeholderClassName="mt-3 flex h-20 w-full items-center justify-center rounded-lg bg-slate-700/50"
                   />
                 )}
+                {fieldErrors[document.key] && <p className="mt-2 text-[11px] font-bold text-rose-400">{fieldErrors[document.key]}</p>}
               </div>
             );
           })}
