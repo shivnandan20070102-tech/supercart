@@ -91,6 +91,9 @@ const DeliveryProfile = () => {
   // Home Area step SIRF pehli-baari setup (signup) me dikhta hai —
   // approve ke baad wale Profile page par ye section hota hi nahi.
   const [isFirstSetup, setIsFirstSetup] = useState(true);
+  // Original (DB) values of the locked fields — used to decide whether a
+  // field may be filled once (empty in DB) or is truly locked (already set).
+  const [origValues, setOrigValues] = useState({ name: '', phone: '', vehicle_number: '' });
   const [settings, setSettings] = useState({
     darkTheme: true,
     appLanguage: 'English',
@@ -116,6 +119,7 @@ const DeliveryProfile = () => {
       // Approve ke baad ka Profile page → section hidden rahega.
       if (mounted) setIsFirstSetup(profile?.profile_completed !== true || String(profile?.approval_status || '').toLowerCase() === 'rejected');
       setForm({ name: profile?.name || current.user_metadata?.full_name || '', email: profile?.email || current.email || '', phone: profile?.phone || current.user_metadata?.phone || '', vehicle_type: profile?.vehicle_type || '', vehicle_number: profile?.vehicle_number || '', emergency_contact: profile?.emergency_contact || '' });
+      setOrigValues({ name: profile?.name || current.user_metadata?.full_name || '', phone: profile?.phone || current.user_metadata?.phone || '', vehicle_number: profile?.vehicle_number || '' });
       setProfilePhotoPreview(profile?.profile_photo_url || '');
       setSavedFiles({ aadhar_card_url: profile?.aadhar_card_url || '', driving_license_url: profile?.driving_license_url || '', pan_card_url: profile?.pan_card_url || '', bike_image_url: profile?.bike_image_url || '' });
       // Pehle se auto-assigned Home Store ho to naam dikhao (column SQL se
@@ -328,44 +332,64 @@ const DeliveryProfile = () => {
     }
     try {
       const profilePhotoUrl = await uploadFile(profilePhoto, 'profile-photo', profilePhotoPreview);
-      const urls = {};
-      for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
-      const approvalRequested = isFirstSetup || approvalStatus === 'rejected';
-      const { error } = await supabase.rpc('submit_delivery_profile', {
-        p_name: form.name.trim(),
-        p_phone: form.phone.trim(),
-        p_vehicle_type: form.vehicle_type.trim(),
-        p_vehicle_number: form.vehicle_number.trim().toUpperCase(),
-        p_emergency_contact: form.emergency_contact.trim(),
-        p_profile_photo_url: profilePhotoUrl,
-        p_aadhar_card_url: urls.aadhar_card_url,
-        p_driving_license_url: urls.driving_license_url,
-        p_pan_card_url: urls.pan_card_url,
-        p_bike_image_url: urls.bike_image_url,
-        p_home_store_id: finalHomeStoreId,
-        p_request_approval: approvalRequested,
-      });
-      if (error) throw error;
-      await supabase.from('users').update({ name: form.name, email: form.email, phone: form.phone }).eq('id', user.id);
-      setSavedFiles(urls);
-      setProfilePhoto(null);
-      setFiles({});
-      if (approvalRequested) {
+      if (isFirstSetup) {
+        // First-time / resubmission: full application (home store + documents + approval request).
+        const urls = {};
+        for (const document of documents) urls[document.key] = await uploadFile(files[document.key], document.key.replace('_url', ''), savedFiles[document.key]);
+        const { error } = await supabase.rpc('submit_delivery_profile', {
+          p_name: form.name.trim(),
+          p_phone: form.phone.trim(),
+          p_vehicle_type: form.vehicle_type.trim(),
+          p_vehicle_number: form.vehicle_number.trim().toUpperCase(),
+          p_emergency_contact: form.emergency_contact.trim(),
+          p_profile_photo_url: profilePhotoUrl,
+          p_aadhar_card_url: urls.aadhar_card_url,
+          p_driving_license_url: urls.driving_license_url,
+          p_pan_card_url: urls.pan_card_url,
+          p_bike_image_url: urls.bike_image_url,
+          p_home_store_id: finalHomeStoreId,
+          p_request_approval: true,
+        });
+        if (error) throw error;
+        await supabase.from('users').update({ name: form.name, email: form.email, phone: form.phone }).eq('id', user.id);
+        setSavedFiles(urls);
+        setProfilePhoto(null);
+        setFiles({});
         setApprovalStatus('pending');
         setNotice({ type: 'success', text: 'Profile saved. Your application has been sent for approval.' });
         window.setTimeout(() => navigate('/delivery/approval-pending', { replace: true }), 900);
       } else {
+        // Approved partner: basic editable profile only. No documents, no home store,
+        // no approval request. Locked fields (name/phone/vehicle_number) are handled
+        // inside update_delivery_profile_basic (kept if already set; fill once if empty).
+        const { error } = await supabase.rpc('update_delivery_profile_basic', {
+          p_name: form.name.trim(),
+          p_phone: form.phone.trim(),
+          p_email: form.email.trim(),
+          p_vehicle_type: form.vehicle_type.trim(),
+          p_vehicle_number: form.vehicle_number.trim().toUpperCase(),
+          p_emergency_contact: form.emergency_contact.trim(),
+          p_profile_photo_url: profilePhotoUrl,
+        });
+        if (error) throw error;
+        setProfilePhoto(null);
+        setFiles({});
         setNotice({ type: 'success', text: 'Profile saved successfully.' });
       }
     } catch (error) {
+      console.error('Save delivery profile error:', {
+        message: error?.message ?? error,
+        code: error?.code,
+        details: error?.details,
+      });
       const raw = String(error?.message || error || '');
-      // Network-level failure (CORS / server unreachable / RPC missing) vs a
-      // real Supabase error. Show the actual message so the cause is clear.
+      // Real network failure (CORS / server unreachable / RPC missing) shows a generic
+      // message; anything else shows the actual cause so it is debuggable.
       const isNetwork = /failed to fetch|networkerror|load failed/i.test(raw);
       setNotice({
         type: 'error',
         text: isNetwork
-          ? 'Save failed — could not reach the server. Check your internet, then make sure the delivery profile setup migration is applied in Supabase (see project README).'
+          ? 'Save failed — could not reach the server. Check your internet connection and try again.'
           : (raw || 'Could not save profile.'),
       });
     } finally { setSaving(false); }
@@ -439,6 +463,12 @@ const DeliveryProfile = () => {
     navigate('/delivery/login', { replace: true });
   };
 
+  // Approved partners: locked fields are read-only UNLESS the field is empty in
+  // DB (then it may be filled exactly once). First-time setup: everything editable.
+  const lockName = !isFirstSetup && String(origValues.name).trim() !== '';
+  const lockPhone = !isFirstSetup && String(origValues.phone).trim() !== '';
+  const lockVehicleNumber = !isFirstSetup && String(origValues.vehicle_number).trim() !== '';
+
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-emerald-300"><LoaderCircle className="h-6 w-6 animate-spin" /></div>;
 
   return <div className={`delivery-profile min-h-screen px-4 py-8 sm:px-8 ${settings.darkTheme ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-900'}`}><div className="mx-auto max-w-4xl">
@@ -508,7 +538,7 @@ const DeliveryProfile = () => {
     </div>)}
     <form onSubmit={saveProfile} className="space-y-6">
       <AccordionSection id="personal" title="Profile" icon={UserRound} openSection={openSection} setOpenSection={setOpenSection}>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Complete your delivery partner profile.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label><label className="text-xs font-bold text-slate-300">Vehicle Type<input required name="vehicle_type" value={form.vehicle_type} onChange={(event) => setForm({ ...form, vehicle_type: event.target.value })} className={inputClass} placeholder="Bike, scooter, etc." /></label><label className="text-xs font-bold text-slate-300">Vehicle Number<input required name="vehicle_number" value={form.vehicle_number} onChange={(event) => setForm({ ...form, vehicle_number: event.target.value.toUpperCase() })} className={inputClass} placeholder="DL 01 AB 1234" /></label><label className="text-xs font-bold text-slate-300 sm:col-span-2">Emergency Contact<input required name="emergency_contact" value={form.emergency_contact} onChange={(event) => setForm({ ...form, emergency_contact: event.target.value })} className={inputClass} placeholder="Name and phone number" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:p-6"><div className="mb-5 flex items-center gap-3"><UserRound className="h-5 w-5 text-emerald-400" /><div><h2 className="font-black">Personal details</h2><p className="text-xs text-slate-400">Complete your delivery partner profile.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs font-bold text-slate-300">Name<input name="name" required value={form.name} readOnly={lockName} disabled={lockName} onChange={(event) => setForm({ ...form, name: event.target.value })} className={`${inputClass} ${lockName ? 'cursor-not-allowed opacity-60' : ''}`} />{lockName && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Email<input type="email" name="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className={inputClass} /></label><label className="text-xs font-bold text-slate-300">Phone Number<input required name="phone" value={form.phone} readOnly={lockPhone} disabled={lockPhone} onChange={(event) => setForm({ ...form, phone: event.target.value })} className={`${inputClass} ${lockPhone ? 'cursor-not-allowed opacity-60' : ''}`} />{lockPhone && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300">Profile Photo<input type="file" accept="image/*" onChange={choosePhoto} className="mt-1.5 block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-500 file:px-3 file:py-2 file:font-bold file:text-slate-950" /></label><label className="text-xs font-bold text-slate-300">Vehicle Type<input required name="vehicle_type" value={form.vehicle_type} onChange={(event) => setForm({ ...form, vehicle_type: event.target.value })} className={inputClass} placeholder="Bike, scooter, etc." /></label><label className="text-xs font-bold text-slate-300">Vehicle Number<input required name="vehicle_number" value={form.vehicle_number} readOnly={lockVehicleNumber} disabled={lockVehicleNumber} onChange={(event) => setForm({ ...form, vehicle_number: event.target.value.toUpperCase() })} className={`${inputClass} ${lockVehicleNumber ? 'cursor-not-allowed opacity-60' : ''}`} placeholder="DL 01 AB 1234" />{lockVehicleNumber && <span className="mt-1 block text-[11px] font-bold text-slate-500">बदला नहीं जा सकता</span>}</label><label className="text-xs font-bold text-slate-300 sm:col-span-2">Emergency Contact<input required name="emergency_contact" value={form.emergency_contact} onChange={(event) => setForm({ ...form, emergency_contact: event.target.value })} className={inputClass} placeholder="Name and phone number" /></label></div>{profilePhotoPreview && <SignedDocImage stored={profilePhotoPreview} alt="Profile preview" className="mt-5 h-24 w-24 rounded-2xl border border-slate-700 object-cover" placeholderClassName="mt-5 flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-700" />}</section>
       </AccordionSection>
       {/* Home Area step SIRF pehli-baari setup me — approve ke baad wale Profile page par hidden */}
       {isFirstSetup && (
