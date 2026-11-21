@@ -215,12 +215,109 @@ const DeliveryProfile = () => {
     setPreviews((current) => ({ ...current, [key]: file.type.startsWith('image/') ? URL.createObjectURL(file) : '' }));
   };
 
+  // Image ko browser ke canvas par load karke max 1600px tak chhota karo,
+  // JPEG mein convert karo. Decode fail (HEIC wagaira) ho to clear error throw.
+  const resizeImageToJpeg = (file) =>
+    new Promise((resolve, reject) => {
+      const MAX_EDGE = 1600;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const tryQuality = (quality) =>
+          new Promise((res) => canvas.toBlob((blob) => res(blob), 'image/jpeg', quality));
+        (async () => {
+          let blob = await tryQuality(0.8);
+          if (blob && blob.size > 2.5 * 1024 * 1024) {
+            blob = await tryQuality(0.6);
+          }
+          if (blob && blob.size > 2.5 * 1024 * 1024) {
+            blob = await tryQuality(0.45);
+          }
+          if (!blob) {
+            reject(new Error('Image convert nahi hui — dobara try karo'));
+            return;
+          }
+          const resized = new File([blob], (file.name.replace(/\.[^.]+$/, '') || 'photo') + '.jpg', {
+            type: 'image/jpeg',
+          });
+          console.log('[DelProfile] resized image', { size: resized.size, type: resized.type });
+          resolve(resized);
+        })();
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Yeh photo format support nahi — JPG ya PNG lagao'));
+      };
+      img.src = url;
+    });
+
+  // Is flag ke liye: upload bucket policy se pehle hi file ko acceptable
+  // size/type me lao. Image => canvas resize -> jpeg. PDF => size check.
+  const prepareUploadFile = async (file) => {
+    if (!file) return { file, extension: null };
+    const lowerName = (file.name || '').toLowerCase();
+    const ext = (lowerName.split('.').pop() || '');
+    const isImage = file.type.startsWith('image/') || ['jpg', 'jpeg', 'jfif', 'png', 'webp'].includes(ext);
+    const isPdf = file.type === 'application/pdf' || ext === 'pdf';
+    if (isPdf) {
+      if (file.size > 3145728) {
+        throw new Error('PDF 3 MB se badi hai — chhoti PDF ya photo lagao');
+      }
+      return { file, extension: 'pdf' };
+    }
+    if (isImage) {
+      const resized = await resizeImageToJpeg(file);
+      return { file: resized, extension: 'jpg' };
+    }
+    // Na image na PDF (unsupported)
+    throw new Error('Yeh file format support nahi — JPG/PNG ya PDF lagao');
+  };
+
   const uploadFile = async (file, folder, previousUrl) => {
     if (!file) return previousUrl || null;
-    const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
-    const path = `${user.id}/${folder}.${extension}`;
-    const { error } = await supabase.storage.from('delivery-documents').upload(path, file, { upsert: true, contentType: file.type, cacheControl: '3600' });
-    if (error) throw error;
+    console.log('[DelProfile] uploadFile start', { size: file.size, type: file.type, name: file.name });
+    // Path ka pehla hissa hamesha Supabase auth.uid() hona chahiye taki RLS
+    // policy match kare. user.id state se nahi — fresh auth session se lo.
+    const { data: { user: authUser }, error: getUserError } = await supabase.auth.getUser();
+    if (getUserError) {
+      console.error('getUser error:', getUserError);
+      throw new Error('Could not fetch Supabase session.');
+    }
+    if (!authUser) {
+      throw new Error('Supabase session missing — logout/login karke dobara try karo');
+    }
+    // Upload se pehle file ko policy-compatible banao (resize/type/size).
+    let prepared;
+    try {
+      prepared = await prepareUploadFile(file);
+    } catch (e) {
+      console.error('prepareUploadFile error:', e);
+      throw e;
+    }
+    const fileToUpload = prepared.file;
+    const extension = prepared.extension;
+    const path = `${authUser.id}/${folder}.${extension}`;
+    const contentType = extension === 'pdf' ? 'application/pdf' : 'image/jpeg';
+    const { error } = await supabase.storage.from('delivery-documents').upload(path, fileToUpload, { upsert: true, contentType, cacheControl: '3600' });
+    if (error) {
+      console.error('Storage upload error:', error);
+      const isPolicy = /row level security|permission denied|new row violates|policy|rls/i.test(String(error.message || ''));
+      if (isPolicy) {
+        throw new Error(
+          `${error.message} — DEBUG appUserId=${user?.id ?? 'null'} authUid=${authUser?.id ?? 'null'} hasSession=${String(Boolean(authUser))}`
+        );
+      }
+      throw error;
+    }
     return supabase.storage.from('delivery-documents').getPublicUrl(path).data.publicUrl;
   };
 
@@ -337,9 +434,10 @@ const DeliveryProfile = () => {
       } catch (error) {
         console.error('Profile photo upload error:', error);
         const raw = String(error?.message || error || '');
+        const offlineNetwork = typeof navigator !== 'undefined' && navigator.onLine === false;
         setNotice({
           type: 'error',
-          text: /failed to fetch|networkerror|load failed/i.test(raw)
+          text: offlineNetwork
             ? 'Save failed — could not reach the server. Check your internet connection and try again.'
             : `Profile photo upload failed: ${raw}`,
         });
@@ -353,9 +451,10 @@ const DeliveryProfile = () => {
         } catch (error) {
           console.error('Document upload error:', error);
           const raw = String(error?.message || error || '');
+          const offlineNetwork = typeof navigator !== 'undefined' && navigator.onLine === false;
           setNotice({
             type: 'error',
-            text: /failed to fetch|networkerror|load failed/i.test(raw)
+            text: offlineNetwork
               ? 'Save failed — could not reach the server. Check your internet connection and try again.'
               : `Document upload failed: ${raw}`,
           });
