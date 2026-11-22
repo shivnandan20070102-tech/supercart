@@ -90,7 +90,7 @@ const Cart = () => {
     originalSubtotal,
     savings,
   } = useCart();
-  const { user, updateProfile } = useAuth();
+  const { user } = useAuth();
   const { isOnline, serviceable, nearestStore, nearestLoading } = useStore();
   const { savedAddress } = useDeliveryAddress();
 
@@ -525,16 +525,31 @@ const Cart = () => {
     setPhoneSaving(true);
     setPhoneError('');
     try {
-      const result = await updateProfile({
-        name: user?.name || '',
-        email: user?.email || '',
-        phone: clean,
-        location: user?.location || '',
-      });
-      if (!result.success) {
-        setPhoneError(result.message || 'Mobile number save nahi ho paya.');
+      // Sirf apni row ka phone update karo (upsert nahi) — users ki INSERT
+      // RLS policy nahi hai, isliye upsert "row violates RLS" deta tha.
+      const { data, error } = await supabase
+        .from('users')
+        .update({ phone: clean })
+        .eq('id', user?.id)
+        .select('id, phone');
+
+      if (error) {
+        setPhoneError(`${error.message} (code: ${error.code || 'unknown'})`);
         return;
       }
+      if (!data || data.length === 0) {
+        setPhoneError('Mobile number save nahi ho paya (0 rows updated).');
+        return;
+      }
+
+      // Local session me bhi reflect karo — agli baar bina prompt ke order jaaye.
+      try {
+        const stored = JSON.parse(localStorage.getItem('supercart_user') || 'null');
+        localStorage.setItem('supercart_user', JSON.stringify({ ...(stored || user), phone: clean }));
+      } catch {
+        /* best-effort only */
+      }
+
       setPhonePromptOpen(false);
       setPhoneValue('');
       proceedWithCheckout();
