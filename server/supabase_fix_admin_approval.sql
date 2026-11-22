@@ -1,0 +1,49 @@
+-- Supabase में चलाने से पहले backup लें।
+-- Fix/suggestion: admin approval Save (Pending → Approved/Rejected) जब DB में persist नहीं हो रहा हो।
+
+-- ---------------------------------------------------------------
+-- 1) पहले confirm करो कि admin की पहचान सही चल रही है:
+--    SELECT public.is_admin();   -- (admin login में true, नहीं तो false)
+--
+-- 2) Active trigger `protect_delivery_profile_status()` पहले से ही admin को allow करता है:
+--      IF NOT public.is_admin() AND COALESCE(current_setting('app.delivery_profile_submit',true),'') <> 'on'
+--         AND (approval_status/profile_completed/home_store_id बदले हों)
+--      THEN RAISE EXCEPTION ... END IF;
+--    मतलब: admin (is_admin() = true) के लिए trigger कुछ नहीं रोकता →
+--    approval_status बदलने की अनुमति है।
+--
+-- 3) RLS policy "Admins can update delivery profile approval" भी admin को allow करती है:
+--      CREATE POLICY "Admins can update delivery profile approval"
+--        ON public.delivery_profiles
+--        FOR UPDATE TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+--    अतः DB-side में admin के लिए कोई रुकावट नहीं है।
+
+-- ---------------------------------------------------------------
+-- अगर इतना सब correct होने के बावजूद Approval Status "Pending" ही दिखे,
+-- तो update 0 rows match कर रहा है। ये diagnostics चलाओ:
+--
+--   SELECT count(*) FROM public.delivery_profiles WHERE user_id = '<partner_user_id>';
+--   SELECT user_id, approval_status, profile_completed
+--     FROM public.delivery_profiles WHERE user_id = '<partner_user_id>';
+--
+--   • count = 0  → partner की delivery_profiles row ही मौजूद नहीं है
+--     (signup/profile-setup कभी पूरा नहीं हुआ)। Solution: row बनाओ,
+--     या direct users table से verified toggle करो।
+--   • count > 1  → duplicate rows हैं; unique index (user_id) से de-dup करो।
+--   • count = 1 और status कुछ और है → table/पाठ (typo) गलत है।
+
+-- ---------------------------------------------------------------
+-- 4) सुरक्षित remedy (कोई trigger/policy DROP नहीं) — किसी भी admin/owner के लिए:
+--
+--   UPDATE public.delivery_profiles
+--      SET approval_status = 'approved', rejection_reason = NULL
+--    WHERE user_id = '<partner_user_id>'
+--    RETURNING user_id, approval_status, rejection_reason;
+--
+--   (rejected करने के लिए approval_status='rejected' और rejection_reason भरो)
+
+-- ---------------------------------------------------------------
+-- Rollback / revert tip:
+--   यहाँ कोई नया trigger/policy नहीं बनाया गया, इसलिए rollback की कोई
+--   ज़रूरत नहीं। ऊपर दिए UPDATE statement ही एकमात्र असली बदलाव हैं और
+--   वे स्वतः reversible हैं (दोबारा पुराना status सेट करके)।
