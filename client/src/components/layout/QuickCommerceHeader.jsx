@@ -23,7 +23,6 @@ import useDeliveryAddress from '../../hooks/useDeliveryAddress';
 import AddressPicker from '../grocery/AddressPicker';
 import { fetchCategoryRows } from '../../services/categories';
 import {
-  DELIVERY_ETA_MINUTES,
   SEARCH_SUGGESTIONS,
   formatDistance,
 } from '../../config/store';
@@ -300,9 +299,7 @@ const QuickCommerceHeader = ({ searchQuery, setSearchQuery, selectedCategory, se
                 </button>
                 <div className="min-w-0 leading-tight">
                   <p className="text-[11px] font-semibold text-emerald-50">SuperCart</p>
-                  <p className="whitespace-nowrap text-xl font-black tracking-tight">
-                    <span className="text-amber-300">{DELIVERY_ETA_MINUTES}</span> minutes
-                  </p>
+                  <p className="whitespace-nowrap text-xl font-black tracking-tight">WELCOME</p>
                   {/* Nearest-store distance badge — selected address se dynamic
                       store name + actual calculated distance (5km rule ke andar
                       hi dikhta hai). Desktop/mobile dono par visible. */}

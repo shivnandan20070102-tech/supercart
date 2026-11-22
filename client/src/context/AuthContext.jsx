@@ -354,16 +354,24 @@ export const AuthProvider = ({ children }) => {
 
     if (error) return { success: false, message: error.message };
 
-    const { error: profileError } = await supabase
+    // Upsert/insert nahi — users par INSERT RLS policy nahi hai, isliye
+    // sirf apni row ke editable columns update karo (name/phone/location).
+    // role/verified jaisa koi column kabhi mat bhejo.
+    const { data: updatedRows, error: profileError } = await supabase
       .from('users')
-      .upsert({
-        id: user.id,
+      .update({
         name: profileData.name,
-        email: data.user?.email || profileData.email,
         phone: profileData.phone || '',
         location: profileData.location || '',
-      }, { onConflict: 'id' });
-    if (profileError) return { success: false, message: profileError.message };
+      })
+      .eq('id', user.id)
+      .select();
+    if (profileError) {
+      return { success: false, message: `${profileError.code ? `(${profileError.code}) ` : ''}${profileError.message}` };
+    }
+    if (!updatedRows || updatedRows.length === 0) {
+      return { success: false, message: '(no rows returned) Update did not match any row.' };
+    }
 
     const updatedUser = {
       ...user,
