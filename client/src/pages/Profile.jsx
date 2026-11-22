@@ -24,6 +24,7 @@ import { getMyOrdersApi } from '../services/api';
 import { useWishlist } from '../context/WishlistContext';
 import { useCart } from '../context/CartContext';
 import ComplaintForm from '../components/ComplaintForm';
+import useDeliveryAddress from '../hooks/useDeliveryAddress';
 
 const inputClassName = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100';
 
@@ -44,6 +45,7 @@ const ProfileSection = ({ icon: Icon, title, description, children }) => (
 
 const Profile = () => {
   const { user, loading, updateProfile, logout } = useAuth();
+  const { savedAddress } = useDeliveryAddress();
   const { wishlistItems, toggleWishlist } = useWishlist();
   const { addToCart } = useCart();
   const navigate = useNavigate();
@@ -56,6 +58,8 @@ const Profile = () => {
   const [upiId, setUpiId] = useState(() => localStorage.getItem('supercart_upi_id') || '');
   const [paymentSaved, setPaymentSaved] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('supercart_dark_mode') === 'true');
+  const [locationAutoFilled, setLocationAutoFilled] = useState(false);
+  const locationTouchedRef = useRef(false);
 
   const [activeSection, setActiveSection] = useState(() => {
     const fromMenu = location.state?.section;
@@ -134,6 +138,21 @@ const Profile = () => {
     loadOrders();
   }, [navigate, user, loading]);
 
+  // Auto-detect: user ka saved location khali ho tob detected/stored delivery
+  // address (header/AddressPicker se) apne aap bharo — bina ko kuch type
+  // kiya ho. (Detect async aaye to bhi tabhi bharo jab field abhi khali ho.)
+  useEffect(() => {
+    if (locationTouchedRef.current) return;
+    if ((user?.location || '').trim()) return; // pehle se saved address hai
+    const detected = savedAddress?.address || '';
+    if (!detected) return;
+    setForm((current) => {
+      if ((current.location || '').trim()) return current;
+      return { ...current, location: detected };
+    });
+    setLocationAutoFilled(true);
+  }, [savedAddress, user?.id]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -145,6 +164,11 @@ const Profile = () => {
   if (!user) return null;
 
   const handleChange = (event) => {
+    if (event.target.name === 'location') {
+      // User ne khud type kiya — auto-fill ise ab overwrite na kare.
+      locationTouchedRef.current = true;
+      setLocationAutoFilled(false);
+    }
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
     setSaved(false);
   };
@@ -152,6 +176,15 @@ const Profile = () => {
   const handleSaveProfile = async (event) => {
     event.preventDefault();
     setSaved(false);
+
+    // Phone validation: optional +91 / spaces / dashes, phir 10-digit [6-9]...
+    const rawPhone = String(form.phone || '').replace(/[^\d]/g, '');
+    const phoneVal = rawPhone.length === 12 && rawPhone.startsWith('91') ? rawPhone.slice(2) : rawPhone;
+    if (form.phone && !/^[6-9]\d{9}$/.test(phoneVal)) {
+      setSaved('Phone number must be a 10-digit Indian mobile starting with 6-9.');
+      return;
+    }
+
     const result = await updateProfile(form);
     if (result.success) {
       setSaved(true);
@@ -233,6 +266,11 @@ const Profile = () => {
                 </label>
                 <label className="text-xs font-bold text-slate-600">Location / delivery address
                   <input name="location" value={form.location} onChange={handleChange} className={`${inputClassName} mt-1.5`} placeholder="Sector 62, Noida" />
+                  {locationAutoFilled && (
+                    <span className="mt-1 block text-[11px] font-semibold text-emerald-600">
+                      Auto-detected location — aap badal sakte hain
+                    </span>
+                  )}
                 </label>
                 <div className="flex items-center gap-3 sm:col-span-2">
                   <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700">
